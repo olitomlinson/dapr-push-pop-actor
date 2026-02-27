@@ -132,6 +132,31 @@ services:
     networks:
       - pushpop-network
 
+  ############################
+  # Locust Load Testing
+  ############################
+  locust:
+    build:
+      context: ./load_tests
+      dockerfile: Dockerfile
+    command:
+      - "--host=http://api-server:8000"
+      - "--web-host=0.0.0.0"
+      - "--web-port=8089"
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./load_tests:/home/locust:delegated
+    environment:
+      - LOCUST_LOCUSTFILE=/home/locust/locustfile.py
+      - TARGET_HOST=http://api-server:8000
+      - TARGET_DAPR_HOST=http://api-server-dapr:3500
+    depends_on:
+      api-server-dapr:
+        condition: service_healthy
+    networks:
+      - pushpop-network
+
 networks:
   pushpop-network:
     driver: bridge
