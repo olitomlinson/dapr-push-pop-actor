@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "push-pop-actor"
+version = "0.1.0"
+description = "A simple queue-based Dapr actor for storing and retrieving dictionaries"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Oliver Tomlinson", email = "oliver@example.com"}
+]
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: AsyncIO",
+]
+keywords = ["dapr", "actor", "queue", "fifo", "microservices"]
+
+dependencies = [
+    "dapr>=1.17.0rc5",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "dapr-ext-fastapi>=1.17.0rc5",
+    "pydantic>=2.9.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "black>=24.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/olitomlinson/dapr-push-pop-actor"
+Documentation = "https://github.com/olitomlinson/dapr-push-pop-actor#readme"
+Repository = "https://github.com/olitomlinson/dapr-push-pop-actor"
+Issues = "https://github.com/olitomlinson/dapr-push-pop-actor/issues"
+
+[project.scripts]
+dapr-push-pop-server = "examples.api_server.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false

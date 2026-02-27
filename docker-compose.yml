@@ -1,0 +1,141 @@
+version: "3.4"
+
+services:
+  ############################
+  # PostgreSQL Database (Actor State Store)
+  ############################
+  postgres-db:
+    image: postgres:16.2-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=pushpop_secret_123
+      - POSTGRES_DB=actor_state
+    ports:
+      - "5432:5432"
+    networks:
+      - pushpop-network
+    volumes:
+      - postgres-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  ############################
+  # Dapr Placement Service
+  ############################
+  placement:
+    image: "${DAPR_PLACEMENT_VERSION}"
+    command: ["./placement", "-port", "50005", "-log-level", "info"]
+    ports:
+      - "50005:50005"
+    networks:
+      - pushpop-network
+
+  ############################
+  # API Server + Dapr Sidecar
+  ############################
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DAPR_GRPC_ENDPOINT=http://api-server-dapr:50001
+      - DAPR_HTTP_ENDPOINT=http://api-server-dapr:3500
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src:delegated
+      - ./examples:/app/examples:delegated
+    depends_on:
+      api-server-dapr:
+        condition: service_started
+    networks:
+      - pushpop-network
+
+  api-server-dapr:
+    image: "${DAPR_RUNTIME_VERSION}"
+    command:
+      [
+        "./daprd",
+        "-app-id",
+        "push-pop-actor-service",
+        "-app-channel-address",
+        "api-server",
+        "-app-port",
+        "8000",
+        "-dapr-http-port",
+        "3500",
+        "-dapr-grpc-port",
+        "50001",
+        "-placement-host-address",
+        "placement:50005",
+        "-scheduler-host-address",
+        "scheduler-0:50006",
+        "-resources-path",
+        "/components",
+        "-config",
+        "/dapr-config/config.yml",
+        "-log-level",
+        "info",
+      ]
+    volumes:
+      - "./dapr/components:/components"
+      - "./dapr/config:/dapr-config"
+    ports:
+      - "3500:3500" # Dapr HTTP port for host access
+      - "50001:50001" # Dapr gRPC port for host access
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+      placement:
+        condition: service_started
+    healthcheck:
+      test:
+        ["CMD", "wget", "-q", "--spider", "http://localhost:3500/v1.0/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks:
+      - pushpop-network
+
+  ############################
+  # Dapr Scheduler Service
+  ############################
+  scheduler-0:
+    image: "${DAPR_SCHEDULER_VERSION}"
+    command:
+      [
+        "./scheduler",
+        "--id",
+        "scheduler-0",
+        "--listen-address",
+        "0.0.0.0",
+        "--etcd-data-dir",
+        "/var/run/dapr/scheduler",
+        "--etcd-initial-cluster",
+        "scheduler-0=http://scheduler-0:2380",
+        "--port",
+        "50006",
+        "--override-broadcast-host-port",
+        "scheduler-0:50006",
+      ]
+    volumes:
+      - ./dapr_scheduler:/var/run/dapr/scheduler
+    ports:
+      - "50006:50006"
+      - "2380:2380"
+    networks:
+      - pushpop-network
+
+networks:
+  pushpop-network:
+    driver: bridge
+
+volumes:
+  postgres-db-data:
+    driver: local
