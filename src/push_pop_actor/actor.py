@@ -94,7 +94,7 @@ class PushPopActor(Actor, PushPopActorInterface):
     def __init__(self, ctx: Any, actor_id: Any) -> None:
         super().__init__(ctx, actor_id)
         self.actor_id = actor_id
-        logger.info(f"PushPopActor initialized: {actor_id}")
+        logger.debug(f"PushPopActor initialized: {actor_id}")
 
     def _get_queue_count(self, metadata: dict, priority: int) -> int:
         """Get count for a priority queue from metadata."""
@@ -223,7 +223,7 @@ class PushPopActor(Actor, PushPopActorInterface):
         Called when the actor is activated.
         Initializes the metadata map if it doesn't exist.
         """
-        logger.info(f"PushPopActor activating: {self.actor_id}")
+        logger.debug(f"PushPopActor activating: {self.actor_id}")
 
         # Check if metadata exists, if not initialize it
         has_metadata, _ = await self._state_manager.try_get_state("metadata")
@@ -236,7 +236,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                 "queues": {}
             })
             await self._state_manager.save_state()
-            logger.info(f"Initialized empty metadata map with segment config for actor {self.actor_id}")
+            logger.debug(f"Initialized empty metadata map with segment config for actor {self.actor_id}")
 
     async def _offload_segment(self, priority: int, segment_num: int, segment_data: List[dict], metadata: dict) -> bool:
         """
@@ -274,7 +274,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(f"Offloaded segment {segment_num} for priority {priority} to state store (actor {self.actor_id})")
+            logger.debug(f"Offloaded segment {segment_num} for priority {priority} to state store (actor {self.actor_id})")
             return True
 
         except Exception as e:
@@ -334,7 +334,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(f"Loaded segment {segment_num} for priority {priority} from state store (actor {self.actor_id})")
+            logger.debug(f"Loaded segment {segment_num} for priority {priority} from state store (actor {self.actor_id})")
             return segment_data
 
         except Exception as e:
@@ -476,15 +476,16 @@ class PushPopActor(Actor, PushPopActorInterface):
             await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(
-                f"Pushed item to priority {priority} segment {tail_segment} for actor {self.actor_id}. Segment size: {len(segment)}, Total count: {current_count + 1}"
+            logger.info(f"Pushed item to priority {priority} (actor {self.actor_id})")
+            logger.debug(
+                f"Push details: segment {tail_segment}, segment size: {len(segment)}, total count: {current_count + 1}"
             )
 
             # Check and offload eligible segments (non-blocking on failure)
             try:
                 await self._check_and_offload_segments(priority, metadata)
             except Exception as e:
-                logger.warning(f"Offload check failed after push (non-blocking): {e}")
+                logger.debug(f"Offload check failed after push (non-blocking): {e}")
 
             return True
 
@@ -505,7 +506,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             # Load metadata map
             has_metadata, metadata = await self._state_manager.try_get_state("metadata")
             if not has_metadata or not metadata:
-                logger.info(f"Pop called but no queues have items for actor {self.actor_id}")
+                logger.debug(f"Pop called but no queues have items for actor {self.actor_id}")
                 return []
 
             # Sort priority keys numerically (0, 1, 2, ...), excluding _active_lock
@@ -554,8 +555,9 @@ class PushPopActor(Actor, PushPopActorInterface):
                         self._set_segment_pointers(metadata, priority, head_segment, tail_segment)
                         await self._state_manager.set_state("metadata", metadata)
                         await self._state_manager.save_state()
-                        logger.info(
-                            f"Popped 1 item from priority {priority} segment {popped_from_segment} (now empty, moved to segment {head_segment}). Remaining count: {new_count}"
+                        logger.info(f"Popped item from priority {priority} (actor {self.actor_id})")
+                        logger.debug(
+                            f"Pop details: segment {popped_from_segment} (now empty, moved to segment {head_segment}), remaining count: {new_count}"
                         )
                         return [item]
                     else:
@@ -565,9 +567,8 @@ class PushPopActor(Actor, PushPopActorInterface):
                         self._delete_queue_metadata(metadata, priority)
                         await self._state_manager.set_state("metadata", metadata)
                         await self._state_manager.save_state()
-                        logger.info(
-                            f"Popped last item from priority {priority} for actor {self.actor_id}. Queue now empty."
-                        )
+                        logger.info(f"Popped item from priority {priority} (actor {self.actor_id})")
+                        logger.debug(f"Pop details: last item from priority {priority}, queue now empty")
                         return [item]
 
                 # Save updated segment and metadata (segment not empty)
@@ -578,13 +579,14 @@ class PushPopActor(Actor, PushPopActorInterface):
                 await self._state_manager.set_state("metadata", metadata)
                 await self._state_manager.save_state()
 
-                logger.info(
-                    f"Popped 1 item from priority {priority} segment {popped_from_segment} for actor {self.actor_id}. Remaining count: {new_count}"
+                logger.info(f"Popped item from priority {priority} (actor {self.actor_id})")
+                logger.debug(
+                    f"Pop details: segment {popped_from_segment}, remaining count: {new_count}"
                 )
                 return [item]
 
             # No items found
-            logger.info(f"Pop called but no items available for actor {self.actor_id}")
+            logger.debug(f"Pop called but no items available for actor {self.actor_id}")
             return []
 
         except Exception as e:
@@ -644,7 +646,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                 # Save segment
                 await self._state_manager.set_state(segment_key, segment)
 
-                logger.info(
+                logger.debug(
                     f"Returned {len(items)} expired lock items to priority {priority} segment {head_segment} for actor {self.actor_id}"
                 )
 
@@ -652,7 +654,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(
+            logger.debug(
                 f"Returned {len(items_with_priority)} total expired lock items to original priorities for actor {self.actor_id}"
             )
 
@@ -691,7 +693,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                 # Check if expired
                 if time.time() < lock["expires_at"]:
                     # Lock still valid - return 423 info
-                    logger.info(f"PopWithAck blocked: active lock exists for actor {self.actor_id}")
+                    logger.debug(f"PopWithAck blocked: active lock exists for actor {self.actor_id}")
                     return {
                         "items": [],
                         "count": 0,
@@ -701,7 +703,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                     }
                 else:
                     # Expired - return items to queue and remove lock
-                    logger.info(f"Lock expired for actor {self.actor_id}, returning items to queue")
+                    logger.debug(f"Lock expired for actor {self.actor_id}, returning items to queue")
                     await self._return_items_to_queue(lock["items_with_priority"])
                     del metadata["_active_lock"]
                     await self._state_manager.set_state("metadata", metadata)
@@ -713,7 +715,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             # Reload metadata after potential cleanup
             has_metadata, metadata = await self._state_manager.try_get_state("metadata")
             if not has_metadata or not metadata:
-                logger.info(f"PopWithAck called but no queues have items for actor {self.actor_id}")
+                logger.debug(f"PopWithAck called but no queues have items for actor {self.actor_id}")
                 return {"items": [], "count": 0, "locked": False}
 
             # Sort priority keys numerically (0, 1, 2, ...), excluding _active_lock
@@ -769,14 +771,14 @@ class PushPopActor(Actor, PushPopActorInterface):
                     self._set_queue_count(metadata, priority, new_count)
                     self._set_segment_pointers(metadata, priority, head_segment, tail_segment)
 
-                logger.info(
+                logger.debug(
                     f"PopWithAck: popped 1 item from priority {priority} segment {head_segment} for actor {self.actor_id}"
                 )
                 break  # Only pop one item
 
             # 3. If no items, return unlocked empty result
             if not items_with_priority:
-                logger.info(f"PopWithAck: no items available for actor {self.actor_id}")
+                logger.debug(f"PopWithAck: no items available for actor {self.actor_id}")
                 return {"items": [], "count": 0, "locked": False}
 
             # 4. Create lock
@@ -794,8 +796,9 @@ class PushPopActor(Actor, PushPopActorInterface):
             await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(
-                f"PopWithAck: created lock {lock_id} for {len(items_with_priority)} items, TTL={ttl}s for actor {self.actor_id}"
+            logger.info(f"PopWithAck: created lock for {len(items_with_priority)} items (actor {self.actor_id})")
+            logger.debug(
+                f"PopWithAck details: lock_id={lock_id}, TTL={ttl}s"
             )
 
             # 6. Return just items to client (not priority metadata)
@@ -851,7 +854,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                 del metadata["_active_lock"]
                 await self._state_manager.set_state("metadata", metadata)
                 await self._state_manager.save_state()
-                logger.info(f"Acknowledge failed: lock expired for actor {self.actor_id}")
+                logger.debug(f"Acknowledge failed: lock expired for actor {self.actor_id}")
                 return {
                     "success": False,
                     "message": "Lock has expired",
@@ -869,7 +872,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(f"Acknowledged {item_count} items for actor {self.actor_id}")
+            logger.info(f"Acknowledged {item_count} items (actor {self.actor_id})")
             return {
                 "success": True,
                 "message": "Items acknowledged successfully",

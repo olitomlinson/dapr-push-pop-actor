@@ -146,7 +146,7 @@ async def push_item(queue_id: str, request: PushRequest):
         if request.priority < 0:
             raise HTTPException(status_code=400, detail="Priority must be non-negative")
 
-        logger.info(f"Push request for queue {queue_id} with priority {request.priority}")
+        logger.debug(f"Push request for queue {queue_id} with priority {request.priority}")
 
         # Create actor proxy
         proxy = ActorProxy.create(
@@ -195,7 +195,7 @@ async def pop_item(
         HTTPException: If the pop operation fails or queue is locked (423)
     """
     try:
-        logger.info(f"Pop request for queue {queue_id}, require_ack={require_ack}")
+        logger.debug(f"Pop request for queue {queue_id}, require_ack={require_ack}")
 
         # Create actor proxy
         proxy = ActorProxy.create(
@@ -254,7 +254,7 @@ async def acknowledge_items(queue_id: str, request: AcknowledgeRequest):
             - 410: Lock has expired
     """
     try:
-        logger.info(f"Acknowledge request for queue {queue_id} with lock_id {request.lock_id}")
+        logger.debug(f"Acknowledge request for queue {queue_id} with lock_id {request.lock_id}")
 
         # Create actor proxy
         proxy = ActorProxy.create(
