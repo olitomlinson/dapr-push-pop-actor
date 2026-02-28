@@ -143,6 +143,7 @@ services:
       - "--host=http://api-server:8000"
       - "--web-host=0.0.0.0"
       - "--web-port=8089"
+      - "--class-picker"
     ports:
       - "8089:8089"
     volumes:

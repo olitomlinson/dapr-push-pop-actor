@@ -12,6 +12,8 @@ in the web UI.
 # from scenarios.s1_push_only import PushOnlyUser
 # from scenarios.s2_pop_only import PopOnlyUser
 from scenarios.s3_mixed import MixedWorkloadUser
+from scenarios.s3_mixed import ProducerHeavyUser
+from scenarios.s3_mixed import MultiPriorityMixedUser
 # from scenarios.s4_concurrent import ConcurrentQueueUser
 # from scenarios.s5_queue_size import QueueSizeUser
 # from scenarios.s6_burst import BurstTrafficUser
@@ -22,5 +24,7 @@ from scenarios.s3_mixed import MixedWorkloadUser
 
 __all__ = [
     "MixedWorkloadUser",
+    "ProducerHeavyUser",
+    "MultiPriorityMixedUser"
     # Add other user classes here as they are implemented
 ]

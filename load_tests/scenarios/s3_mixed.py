@@ -31,6 +31,7 @@ class MixedWorkloadUser(BasePushPopUser):
     Target: 50 RPS total (25 push/s + 25 pop/s)
     """
 
+    abstract = False
     wait_time = between(0.5, 1.5)  # Average 1s between requests = ~1 RPS per user
 
     def on_start(self):
@@ -68,6 +69,7 @@ class ProducerHeavyUser(BasePushPopUser):
     Target: 100 RPS total (80 push/s + 20 pop/s)
     """
 
+    abstract = False
     wait_time = between(0.3, 0.7)  # Faster rate for higher throughput
 
     def on_start(self):
@@ -101,6 +103,7 @@ class ConsumerHeavyUser(BasePushPopUser):
     Target: 100 RPS total (20 push/s + 80 pop/s)
     """
 
+    abstract = False
     wait_time = between(0.3, 0.7)  # Faster rate for higher throughput
 
     def on_start(self):
@@ -139,6 +142,7 @@ class MultiPriorityMixedUser(BasePushPopUser):
     Target: 50 RPS total (balanced push/pop)
     """
 
+    abstract = False
     wait_time = between(0.5, 1.5)
 
     def on_start(self):
@@ -173,6 +177,7 @@ class BalancedLargeItemsUser(BasePushPopUser):
     Target: 50 RPS total (balanced push/pop)
     """
 
+    abstract = False
     wait_time = between(0.5, 1.5)
 
     def on_start(self):
