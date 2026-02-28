@@ -57,7 +57,7 @@ Each actor stores multiple keys in the state store based on priority levels:
 **Priority Queue Keys**: `queue_0`, `queue_1`, `queue_2`, ..., `queue_N`
 **Value**: JSON array of dictionaries (FIFO-ordered items at that priority)
 
-**Metadata Key**: `queue_counts`
+**Metadata Key**: `metadata`
 **Value**: JSON object mapping priority levels to item counts
 
 Example state for actor "my-queue":
@@ -75,7 +75,7 @@ Example state for actor "my-queue":
   {"task": "generate_report", "type": "monthly"}
 ]
 
-// queue_counts (metadata)
+// metadata (metadata)
 {
   "0": 2,
   "1": 2
@@ -88,14 +88,14 @@ Example state for actor "my-queue":
 1. Extract item and priority from request (default priority: 0)
 2. Load queue for that priority level (e.g., `queue_1`) from state store
 3. Append new item to end of array
-4. Update `queue_counts` metadata map
-5. Save both the queue and counts back to state store
+4. Update `metadata` metadata map
+5. Save both the queue and metadata back to state store
 
 **Pop Operation:**
-1. Load `queue_counts` metadata to determine which priorities have items
+1. Load `metadata` metadata to determine which priorities have items
 2. Sort priority keys numerically (0, 1, 2, ...)
 3. For each priority in order, load its queue (e.g., `queue_0`) and pop single item from front
-4. Update the queue key and `queue_counts`
+4. Update the queue key and metadata map
 5. Save state and return item to caller
 
 ## Actor Lifecycle

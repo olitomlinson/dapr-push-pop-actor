@@ -6,6 +6,7 @@ This actor implements an N-queue priority system where:
 - Pop: removes and returns a single dictionary, draining from lowest priority index first
 - Each priority level maintains FIFO ordering independently
 """
+
 import logging
 import secrets
 import time
@@ -93,19 +94,56 @@ class PushPopActor(Actor, PushPopActorInterface):
         self.actor_id = actor_id
         logger.info(f"PushPopActor initialized: {actor_id}")
 
+    def _get_queue_count(self, metadata: dict, priority: int) -> int:
+        """Get count for a priority queue from metadata."""
+        queue_key = f"queue_{priority}"
+        if "queues" not in metadata or queue_key not in metadata["queues"]:
+            return 0
+        return metadata["queues"][queue_key]["metadata"].get("count", 0)
+
+    def _set_queue_count(self, metadata: dict, priority: int, count: int) -> None:
+        """Set count for a priority queue in metadata."""
+        queue_key = f"queue_{priority}"
+        if "queues" not in metadata:
+            metadata["queues"] = {}
+        if queue_key not in metadata["queues"]:
+            metadata["queues"][queue_key] = {"metadata": {}}
+        metadata["queues"][queue_key]["metadata"]["count"] = count
+
+    def _delete_queue_metadata(self, metadata: dict, priority: int) -> None:
+        """Delete queue metadata when count reaches zero."""
+        queue_key = f"queue_{priority}"
+        if "queues" in metadata and queue_key in metadata["queues"]:
+            del metadata["queues"][queue_key]
+
+    def _get_priority_keys(self, metadata: dict) -> list:
+        """Extract priority numbers from metadata queues."""
+        if "queues" not in metadata:
+            return []
+        priorities = []
+        for queue_key in metadata["queues"].keys():
+            # Parse "queue_0" -> 0, "queue_1" -> 1, etc.
+            if queue_key.startswith("queue_"):
+                try:
+                    priority = int(queue_key.split("_")[1])
+                    priorities.append(priority)
+                except (IndexError, ValueError):
+                    continue
+        return sorted(priorities)
+
     async def _on_activate(self) -> None:
         """
         Called when the actor is activated.
-        Initializes the queue counts map if it doesn't exist.
+        Initializes the metadata map if it doesn't exist.
         """
         logger.info(f"PushPopActor activating: {self.actor_id}")
 
-        # Check if queue_counts exists, if not initialize it
-        has_counts, _ = await self._state_manager.try_get_state("queue_counts")
-        if not has_counts:
-            await self._state_manager.set_state("queue_counts", {})
+        # Check if metadata exists, if not initialize it
+        has_metadata, _ = await self._state_manager.try_get_state("metadata")
+        if not has_metadata:
+            await self._state_manager.set_state("metadata", {"queues": {}})
             await self._state_manager.save_state()
-            logger.info(f"Initialized empty queue_counts map for actor {self.actor_id}")
+            logger.info(f"Initialized empty metadata map for actor {self.actor_id}")
 
     async def Push(self, data: Dict[str, Any]) -> bool:
         """
@@ -145,19 +183,22 @@ class PushPopActor(Actor, PushPopActorInterface):
             # Push item to queue (append to end)
             queue.append(item)
 
-            # Update counts map
-            has_counts, counts = await self._state_manager.try_get_state("queue_counts")
-            if not has_counts:
-                counts = {}
+            # Update metadata map
+            has_metadata, metadata = await self._state_manager.try_get_state("metadata")
+            if not has_metadata:
+                metadata = {"queues": {}}
 
-            counts[str(priority)] = counts.get(str(priority), 0) + 1
+            current_count = self._get_queue_count(metadata, priority)
+            self._set_queue_count(metadata, priority, current_count + 1)
 
-            # Save both queue and counts map
+            # Save both queue and metadata map
             await self._state_manager.set_state(queue_key, queue)
-            await self._state_manager.set_state("queue_counts", counts)
+            await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(f"Pushed item to priority {priority} queue for actor {self.actor_id}. Queue size: {len(queue)}, Total counts: {counts}")
+            logger.info(
+                f"Pushed item to priority {priority} queue for actor {self.actor_id}. Queue size: {len(queue)}, Total metadata: {metadata}"
+            )
             return True
 
         except Exception as e:
@@ -174,18 +215,18 @@ class PushPopActor(Actor, PushPopActorInterface):
             list: Array with single item, or empty array if no items available
         """
         try:
-            # Load queue_counts map
-            has_counts, counts = await self._state_manager.try_get_state("queue_counts")
-            if not has_counts or not counts:
+            # Load metadata map
+            has_metadata, metadata = await self._state_manager.try_get_state("metadata")
+            if not has_metadata or not metadata:
                 logger.info(f"Pop called but no queues have items for actor {self.actor_id}")
                 return []
 
             # Sort priority keys numerically (0, 1, 2, ...), excluding _active_lock
-            priority_keys = sorted([int(k) for k in counts.keys() if k != "_active_lock"])
+            priority_keys = self._get_priority_keys(metadata)
 
             # Process each priority level in order
             for priority in priority_keys:
-                count = counts.get(str(priority), 0)
+                count = self._get_queue_count(metadata, priority)
                 if count == 0:
                     continue
 
@@ -196,8 +237,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                 if not has_queue or not queue:
                     # Defensive: fix count desync
                     logger.warning(f"Count desync detected for priority {priority}, fixing...")
-                    if str(priority) in counts:
-                        del counts[str(priority)]
+                    self._delete_queue_metadata(metadata, priority)
                     continue
 
                 # Pop single item from front
@@ -207,18 +247,20 @@ class PushPopActor(Actor, PushPopActorInterface):
                 # Update state
                 await self._state_manager.set_state(queue_key, queue)
 
-                # Update counts map
+                # Update metadata map
                 new_count = count - 1
                 if new_count == 0:
-                    del counts[str(priority)]
+                    self._delete_queue_metadata(metadata, priority)
                 else:
-                    counts[str(priority)] = new_count
+                    self._set_queue_count(metadata, priority, new_count)
 
-                # Save updated counts map
-                await self._state_manager.set_state("queue_counts", counts)
+                # Save updated metadata map
+                await self._state_manager.set_state("metadata", metadata)
                 await self._state_manager.save_state()
 
-                logger.info(f"Popped 1 item from priority {priority} for actor {self.actor_id}. Remaining counts: {counts}")
+                logger.info(
+                    f"Popped 1 item from priority {priority} for actor {self.actor_id}. Remaining metadata: {metadata}"
+                )
                 return [item]
 
             # No items found
@@ -249,10 +291,10 @@ class PushPopActor(Actor, PushPopActorInterface):
                     items_by_priority[priority] = []
                 items_by_priority[priority].append(item)
 
-            # Load current counts
-            has_counts, counts = await self._state_manager.try_get_state("queue_counts")
-            if not has_counts:
-                counts = {}
+            # Load current metadata
+            has_metadata, metadata = await self._state_manager.try_get_state("metadata")
+            if not has_metadata:
+                metadata = {"queues": {}}
 
             # Return items to each priority queue
             for priority, items in items_by_priority.items():
@@ -266,23 +308,29 @@ class PushPopActor(Actor, PushPopActorInterface):
                 # Prepend items to front (FIFO, they were already popped)
                 queue = items + queue
 
-                # Update counts
-                current_count = int(counts.get(str(priority), 0))
-                counts[str(priority)] = current_count + len(items)
+                # Update metadata
+                current_count = self._get_queue_count(metadata, priority)
+                self._set_queue_count(metadata, priority, current_count + len(items))
 
                 # Save queue
                 await self._state_manager.set_state(queue_key, queue)
 
-                logger.info(f"Returned {len(items)} expired lock items to queue_{priority} for actor {self.actor_id}")
+                logger.info(
+                    f"Returned {len(items)} expired lock items to queue_{priority} for actor {self.actor_id}"
+                )
 
-            # Save updated counts
-            await self._state_manager.set_state("queue_counts", counts)
+            # Save updated metadata
+            await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(f"Returned {len(items_with_priority)} total expired lock items to original priorities for actor {self.actor_id}")
+            logger.info(
+                f"Returned {len(items_with_priority)} total expired lock items to original priorities for actor {self.actor_id}"
+            )
 
         except Exception as e:
-            logger.error(f"Error returning items to queue for actor {self.actor_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error returning items to queue for actor {self.actor_id}: {e}", exc_info=True
+            )
 
     async def PopWithAck(self, data: Dict[str, Any]) -> dict:
         """
@@ -308,9 +356,9 @@ class PushPopActor(Actor, PushPopActorInterface):
         """
         try:
             # 1. Check for active lock and handle expiration
-            has_counts, counts = await self._state_manager.try_get_state("queue_counts")
-            if has_counts and "_active_lock" in counts:
-                lock = counts["_active_lock"]
+            has_metadata, metadata = await self._state_manager.try_get_state("metadata")
+            if has_metadata and "_active_lock" in metadata:
+                lock = metadata["_active_lock"]
                 # Check if expired
                 if time.time() < lock["expires_at"]:
                     # Lock still valid - return 423 info
@@ -320,31 +368,31 @@ class PushPopActor(Actor, PushPopActorInterface):
                         "count": 0,
                         "locked": True,
                         "lock_expires_at": lock["expires_at"],
-                        "message": "Queue is locked pending acknowledgement"
+                        "message": "Queue is locked pending acknowledgement",
                     }
                 else:
                     # Expired - return items to queue and remove lock
                     logger.info(f"Lock expired for actor {self.actor_id}, returning items to queue")
                     await self._return_items_to_queue(lock["items_with_priority"])
-                    del counts["_active_lock"]
-                    await self._state_manager.set_state("queue_counts", counts)
+                    del metadata["_active_lock"]
+                    await self._state_manager.set_state("metadata", metadata)
                     await self._state_manager.save_state()
 
             # 2. Pop single item WITH priority tracking
             items_with_priority = []
 
-            # Reload counts after potential cleanup
-            has_counts, counts = await self._state_manager.try_get_state("queue_counts")
-            if not has_counts or not counts:
+            # Reload metadata after potential cleanup
+            has_metadata, metadata = await self._state_manager.try_get_state("metadata")
+            if not has_metadata or not metadata:
                 logger.info(f"PopWithAck called but no queues have items for actor {self.actor_id}")
                 return {"items": [], "count": 0, "locked": False}
 
             # Sort priority keys numerically (0, 1, 2, ...), excluding _active_lock
-            priority_keys = sorted([int(k) for k in counts.keys() if k != "_active_lock"])
+            priority_keys = self._get_priority_keys(metadata)
 
             # Process each priority level in order
             for priority in priority_keys:
-                count = counts.get(str(priority), 0)
+                count = self._get_queue_count(metadata, priority)
                 if count == 0:
                     continue
 
@@ -355,8 +403,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                 if not has_queue or not queue:
                     # Defensive: fix count desync
                     logger.warning(f"Count desync detected for priority {priority}, fixing...")
-                    if str(priority) in counts:
-                        del counts[str(priority)]
+                    self._delete_queue_metadata(metadata, priority)
                     continue
 
                 # Pop single item from front
@@ -369,14 +416,16 @@ class PushPopActor(Actor, PushPopActorInterface):
                 # Update state
                 await self._state_manager.set_state(queue_key, queue)
 
-                # Update counts map
+                # Update metadata map
                 new_count = count - 1
                 if new_count == 0:
-                    del counts[str(priority)]
+                    self._delete_queue_metadata(metadata, priority)
                 else:
-                    counts[str(priority)] = new_count
+                    self._set_queue_count(metadata, priority, new_count)
 
-                logger.info(f"PopWithAck: popped 1 item from priority {priority} for actor {self.actor_id}")
+                logger.info(
+                    f"PopWithAck: popped 1 item from priority {priority} for actor {self.actor_id}"
+                )
                 break  # Only pop one item
 
             # 3. If no items, return unlocked empty result
@@ -390,16 +439,18 @@ class PushPopActor(Actor, PushPopActorInterface):
             expires_at = time.time() + ttl
 
             # 5. Store lock with priority-aware structure
-            counts["_active_lock"] = {
+            metadata["_active_lock"] = {
                 "lock_id": lock_id,
                 "items_with_priority": items_with_priority,
                 "expires_at": expires_at,
-                "created_at": time.time()
+                "created_at": time.time(),
             }
-            await self._state_manager.set_state("queue_counts", counts)
+            await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
-            logger.info(f"PopWithAck: created lock {lock_id} for {len(items_with_priority)} items, TTL={ttl}s for actor {self.actor_id}")
+            logger.info(
+                f"PopWithAck: created lock {lock_id} for {len(items_with_priority)} items, TTL={ttl}s for actor {self.actor_id}"
+            )
 
             # 6. Return just items to client (not priority metadata)
             return {
@@ -407,7 +458,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                 "count": len(items_with_priority),
                 "locked": True,
                 "lock_id": lock_id,
-                "lock_expires_at": expires_at
+                "lock_expires_at": expires_at,
             }
 
         except Exception as e:
@@ -441,24 +492,24 @@ class PushPopActor(Actor, PushPopActorInterface):
                 return {"success": False, "message": "lock_id is required"}
 
             # Load lock
-            has_counts, counts = await self._state_manager.try_get_state("queue_counts")
-            if not has_counts or "_active_lock" not in counts:
+            has_metadata, metadata = await self._state_manager.try_get_state("metadata")
+            if not has_metadata or "_active_lock" not in metadata:
                 logger.warning(f"Acknowledge failed: no active lock for actor {self.actor_id}")
                 return {"success": False, "message": "No active lock found"}
 
-            lock = counts["_active_lock"]
+            lock = metadata["_active_lock"]
 
             # Check if expired
             if time.time() >= lock["expires_at"]:
                 # Remove expired lock
-                del counts["_active_lock"]
-                await self._state_manager.set_state("queue_counts", counts)
+                del metadata["_active_lock"]
+                await self._state_manager.set_state("metadata", metadata)
                 await self._state_manager.save_state()
                 logger.info(f"Acknowledge failed: lock expired for actor {self.actor_id}")
                 return {
                     "success": False,
                     "message": "Lock has expired",
-                    "error_code": "LOCK_EXPIRED"
+                    "error_code": "LOCK_EXPIRED",
                 }
 
             # Validate lock ID
@@ -468,18 +519,17 @@ class PushPopActor(Actor, PushPopActorInterface):
 
             # Remove lock (items are already removed from queue)
             item_count = len(lock["items_with_priority"])
-            del counts["_active_lock"]
-            await self._state_manager.set_state("queue_counts", counts)
+            del metadata["_active_lock"]
+            await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
             logger.info(f"Acknowledged {item_count} items for actor {self.actor_id}")
             return {
                 "success": True,
                 "message": "Items acknowledged successfully",
-                "items_acknowledged": item_count
+                "items_acknowledged": item_count,
             }
 
         except Exception as e:
             logger.error(f"Error in Acknowledge for actor {self.actor_id}: {e}", exc_info=True)
             return {"success": False, "message": f"Error: {str(e)}"}
-

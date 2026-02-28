@@ -10,6 +10,7 @@ Endpoints:
 - POST /queue/{queueId}/pop - Pop a single item from queue (priority-ordered)
 - GET /health - Health check
 """
+
 import asyncio
 import logging
 import signal
@@ -161,7 +162,7 @@ async def push_item(queue_id: str, request: PushRequest):
         if success:
             return PushResponse(
                 success=True,
-                message=f"Item pushed to queue {queue_id} at priority {request.priority}"
+                message=f"Item pushed to queue {queue_id} at priority {request.priority}",
             )
         else:
             raise HTTPException(status_code=400, detail="Failed to push item")
@@ -177,7 +178,7 @@ async def push_item(queue_id: str, request: PushRequest):
 async def pop_item(
     queue_id: str,
     require_ack: bool = Query(False, description="Require acknowledgement for popped items"),
-    ttl_seconds: int = Query(30, ge=1, le=300, description="Lock TTL in seconds (1-300)")
+    ttl_seconds: int = Query(30, ge=1, le=300, description="Lock TTL in seconds (1-300)"),
 ):
     """
     Pop a single item from the queue.
@@ -213,8 +214,8 @@ async def pop_item(
                     status_code=423,
                     detail={
                         "message": result.get("message"),
-                        "lock_expires_at": result.get("lock_expires_at")
-                    }
+                        "lock_expires_at": result.get("lock_expires_at"),
+                    },
                 )
 
             return PopWithAckResponse(**result)

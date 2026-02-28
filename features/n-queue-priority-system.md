@@ -31,8 +31,8 @@ The system uses a dynamic multi-queue architecture with a centralized count map:
 - Created on-demand when first item is pushed to that priority
 - Empty queues are cleaned up (set to empty list) after Pop
 
-**Count Map State Key:**
-- `queue_counts` (always exists after actor activation)
+**Metadata Map State Key:**
+- `metadata` (always exists after actor activation)
 - Format: `{"0": 5, "1": 3, "2": 1}` (priority → count mapping)
 - Used for efficient priority scanning without loading all queues
 - Keys removed when count reaches zero (clean state)
@@ -42,7 +42,7 @@ The system uses a dynamic multi-queue architecture with a centralized count map:
 ```
 Actor State:
 {
-  "queue_counts": {"0": 3, "1": 2, "5": 1},
+  "metadata": {"0": 3, "1": 2, "5": 1},
   "queue_0": [
     {"id": 1, "message": "urgent"},
     {"id": 2, "message": "critical"},
@@ -80,9 +80,9 @@ async def Push(self, data: dict) -> bool
 2. Validates priority is non-negative integer (>= 0)
 3. Loads queue at `queue_{priority}` (creates empty if doesn't exist)
 4. Appends item to end of queue (FIFO)
-5. Loads `queue_counts` map
+5. Loads `metadata` map
 6. Increments count for priority: `counts[str(priority)] += 1`
-7. Saves both queue and counts map
+7. Saves both queue and metadata map
 
 **Example:**
 ```python
@@ -110,15 +110,15 @@ async def Pop(self) -> List[Dict[str, Any]]
 - `List[Dict[str, Any]]`: Array with single dictionary (empty array if no items available)
 
 **Behavior (Priority-Ordered Draining):**
-1. Loads `queue_counts` map
+1. Loads `metadata` map
 2. Returns empty list if map is empty (no queues have items)
 3. Sorts priority keys numerically (0, 1, 2, ...)
 4. For each priority with non-zero count (in order):
    - Loads `queue_{priority}`
    - Pops single item from front (FIFO)
    - Updates queue
-   - Updates counts map (decrements or removes key if zero)
-   - Saves updated counts map
+   - Updates metadata map (decrements or removes key if zero)
+   - Saves updated metadata map
    - Returns item in a list
 5. Returns empty list if all queues are empty
 
@@ -229,7 +229,7 @@ await actor.Push({"item": {"data": "value"}})  # Defaults to priority 0
 
 **Push:**
 - O(1) - constant time
-- 2 state operations (queue + counts map)
+- 2 state operations (queue + metadata map)
 
 **Pop:**
 - O(P) where P = number of non-empty priority levels checked to find first item
@@ -243,8 +243,8 @@ await actor.Push({"item": {"data": "value"}})  # Defaults to priority 0
 - Pop: 1 state read, 1 state write
 
 **With N-queue system:**
-- Push: 2 state reads (`queue_{priority}` + `queue_counts`), 2 state writes
-- Pop: 1 state read (`queue_counts`) + P state reads (queues) + (P+1) state writes
+- Push: 2 state reads (`queue_{priority}` + `metadata`), 2 state writes
+- Pop: 1 state read (`metadata`) + P state reads (queues) + (P+1) state writes
 
 ### Latency Impact
 
@@ -269,7 +269,7 @@ await actor.Push({"item": {"data": "value"}})  # Defaults to priority 0
 ### Breaking Changes
 
 - **State Schema**: Old `"queue"` key no longer used
-- **Actor Activation**: Initializes `queue_counts` instead of `"queue"`
+- **Actor Activation**: Initializes `metadata` instead of `"queue"`
 - **No Backward Compatibility**: Old actors with `"queue"` state will not migrate automatically
 
 ### Migration Steps
@@ -294,8 +294,8 @@ All new actors will use the N-queue system with default priority 0.
 - Dapr state store may clean up empty state keys automatically
 
 **Zero Counts:**
-- When a priority count reaches zero, the key is removed from `queue_counts`
-- Keeps the counts map clean and minimal
+- When a priority count reaches zero, the key is removed from `metadata`
+- Keeps the metadata map clean and minimal
 
 ### Validation
 

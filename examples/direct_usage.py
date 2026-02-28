@@ -9,6 +9,7 @@ Prerequisites:
 - Dapr runtime must be running (dapr run or docker-compose)
 - Actor must be registered in your application
 """
+
 import asyncio
 from dapr.actor import ActorId, ActorProxy
 

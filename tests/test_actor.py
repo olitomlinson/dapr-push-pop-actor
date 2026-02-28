@@ -3,8 +3,9 @@ Unit tests for PushPopActor.
 
 These tests mock the Dapr state manager to avoid requiring a running Dapr runtime.
 """
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 from push_pop_actor import PushPopActor
 
@@ -48,13 +49,13 @@ def mock_actor():
 
 @pytest.mark.asyncio
 async def test_actor_activation(mock_actor):
-    """Test that actor activation initializes empty queue_counts map."""
+    """Test that actor activation initializes empty metadata map."""
     await mock_actor._on_activate()
 
-    # Check that queue_counts was initialized
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert has_counts is True
-    assert counts == {}
+    # Check that metadata was initialized
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert has_metadata is True
+    assert metadata == {"queues": {}}
 
 
 @pytest.mark.asyncio
@@ -74,8 +75,8 @@ async def test_push_single_item(mock_actor):
     assert queue[0] == item
 
     # Verify counts map was updated
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -100,8 +101,8 @@ async def test_push_multiple_items(mock_actor):
     assert queue == items
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 3
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 3
 
 
 @pytest.mark.asyncio
@@ -122,8 +123,8 @@ async def test_push_invalid_item(mock_actor):
     assert has_queue is False
 
     # Verify counts map is still empty
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts == {}
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata == {"queues": {}}
 
 
 @pytest.mark.asyncio
@@ -160,8 +161,8 @@ async def test_pop_single_item(mock_actor):
     assert queue == items[1:]
 
     # Verify counts map was updated
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 2
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 2
 
 
 @pytest.mark.asyncio
@@ -195,8 +196,8 @@ async def test_pop_multiple_items(mock_actor):
     assert queue == items[3:]
 
     # Verify counts map was updated
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 2
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 2
 
 
 @pytest.mark.asyncio
@@ -224,8 +225,8 @@ async def test_pop_more_than_available(mock_actor):
     assert popped == items
 
     # Verify counts map is empty
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts == {}
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata == {"queues": {}}
 
 
 @pytest.mark.asyncio
@@ -275,8 +276,8 @@ async def test_push_after_pop(mock_actor):
     assert queue[1]["id"] == 3  # New item
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 2
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 2
 
 
 @pytest.mark.asyncio
@@ -302,9 +303,11 @@ async def test_complex_item_structure(mock_actor):
     assert result[0]["user"]["name"] == "Alice"
     assert result[0]["nested"]["deeply"]["nested"]["value"] == "test"
 
+
 # ============================================================================
 # Priority System Tests
 # ============================================================================
+
 
 @pytest.mark.asyncio
 async def test_push_with_priority_0(mock_actor):
@@ -323,8 +326,8 @@ async def test_push_with_priority_0(mock_actor):
     assert queue[0] == item
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -343,8 +346,8 @@ async def test_push_with_priority_5(mock_actor):
     assert len(queue) == 1
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["5"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_5"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -362,8 +365,8 @@ async def test_push_default_priority(mock_actor):
     assert has_queue is True
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -377,8 +380,8 @@ async def test_push_invalid_priority_negative(mock_actor):
     assert result is False
 
     # Verify no queues created
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts == {}
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata == {"queues": {}}
 
 
 @pytest.mark.asyncio
@@ -392,8 +395,8 @@ async def test_push_invalid_priority_non_int(mock_actor):
     assert result is False
 
     # Verify no queues created
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts == {}
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata == {"queues": {}}
 
 
 @pytest.mark.asyncio
@@ -408,10 +411,10 @@ async def test_counts_map_updated_on_push(mock_actor):
     await mock_actor.Push({"item": {"id": 4}, "priority": 5})
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 2
-    assert counts["1"] == 1
-    assert counts["5"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 2
+    assert metadata["queues"]["queue_1"]["metadata"]["count"] == 1
+    assert metadata["queues"]["queue_5"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -495,9 +498,9 @@ async def test_pop_drains_priority_completely(mock_actor):
     assert len(q1) == 1
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "0" not in counts  # Priority 0 should be removed
-    assert counts["1"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "queue_0" not in metadata["queues"]  # Priority 0 should be removed
+    assert metadata["queues"]["queue_1"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -567,9 +570,9 @@ async def test_counts_map_decremented_on_pop(mock_actor):
     await mock_actor.Pop()
 
     # Verify counts map
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 1
-    assert counts["1"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 1
+    assert metadata["queues"]["queue_1"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -585,9 +588,9 @@ async def test_counts_map_key_removed_when_zero(mock_actor):
     await mock_actor.Pop()
 
     # Verify priority 0 removed from counts
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "0" not in counts
-    assert counts["1"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "queue_0" not in metadata["queues"]
+    assert metadata["queues"]["queue_1"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -655,9 +658,9 @@ async def test_push_after_pop_multi_priority(mock_actor):
     await mock_actor.Push({"item": {"id": 3}, "priority": 5})
 
     # Verify
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 1
-    assert counts["5"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 1
+    assert metadata["queues"]["queue_5"]["metadata"]["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -707,11 +710,11 @@ async def test_pop_with_ack_creates_lock(mock_actor):
     assert len(result["lock_id"]) > 0
     assert "lock_expires_at" in result
 
-    # Verify lock was stored in queue_counts
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "_active_lock" in counts
-    assert counts["_active_lock"]["lock_id"] == result["lock_id"]
-    assert len(counts["_active_lock"]["items_with_priority"]) == 1
+    # Verify lock was stored in metadata
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "_active_lock" in metadata
+    assert metadata["_active_lock"]["lock_id"] == result["lock_id"]
+    assert len(metadata["_active_lock"]["items_with_priority"]) == 1
 
 
 @pytest.mark.asyncio
@@ -733,8 +736,8 @@ async def test_acknowledge_valid_lock(mock_actor):
     assert ack_result["items_acknowledged"] == 1
 
     # Verify lock was removed
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "_active_lock" not in counts
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "_active_lock" not in metadata
 
 
 @pytest.mark.asyncio
@@ -754,8 +757,8 @@ async def test_acknowledge_invalid_lock_id(mock_actor):
     assert "invalid" in ack_result["message"].lower()
 
     # Verify lock still exists
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "_active_lock" in counts
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "_active_lock" in metadata
 
 
 @pytest.mark.asyncio
@@ -778,7 +781,7 @@ async def test_pop_while_locked_returns_locked_status(mock_actor):
 
     # Push and pop with ack
     await mock_actor.Push({"item": {"id": 1}})
-    first_pop = await mock_actor.PopWithAck({})
+    await mock_actor.PopWithAck({})
 
     # Try to pop again while locked
     second_pop = await mock_actor.PopWithAck({})
@@ -794,7 +797,6 @@ async def test_pop_while_locked_returns_locked_status(mock_actor):
 @pytest.mark.asyncio
 async def test_lock_expiration_returns_items(mock_actor):
     """Test that expired locks automatically return items to queue."""
-    import time
     from unittest.mock import patch
 
     await mock_actor._on_activate()
@@ -821,8 +823,8 @@ async def test_lock_expiration_returns_items(mock_actor):
     assert ack_result.get("error_code") == "LOCK_EXPIRED"
 
     # Verify lock was removed
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "_active_lock" not in counts
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "_active_lock" not in metadata
 
 
 @pytest.mark.asyncio
@@ -874,8 +876,8 @@ async def test_regular_pop_still_works(mock_actor):
     assert popped[1]["id"] == 2
 
     # Verify no lock was created
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "_active_lock" not in counts
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "_active_lock" not in metadata
 
 
 @pytest.mark.asyncio
@@ -893,8 +895,8 @@ async def test_pop_with_ack_empty_queue(mock_actor):
     assert "lock_id" not in result
 
     # Verify no lock was created
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert "_active_lock" not in counts
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "_active_lock" not in metadata
 
 
 @pytest.mark.asyncio
@@ -928,8 +930,8 @@ async def test_pop_with_ack_multiple_items_single_lock(mock_actor):
     assert result["locked"] is True
 
     # Verify lock contains single item
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert len(counts["_active_lock"]["items_with_priority"]) == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert len(metadata["_active_lock"]["items_with_priority"]) == 1
 
 
 @pytest.mark.asyncio
@@ -950,8 +952,8 @@ async def test_pop_with_ack_custom_ttl(mock_actor):
     assert result["lock_expires_at"] == 1060.0
 
     # Verify in state
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["_active_lock"]["expires_at"] == 1060.0
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["_active_lock"]["expires_at"] == 1060.0
 
 
 @pytest.mark.asyncio
@@ -1020,9 +1022,9 @@ async def test_expired_lock_items_return_to_original_priority_single(mock_actor)
 
     # After the second pop, the item was taken from queue_2
     # So verify the counts are correct
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
     # After second pop with ack, there should be a new lock
-    assert "_active_lock" in counts
+    assert "_active_lock" in metadata
 
 
 @pytest.mark.asyncio
@@ -1072,7 +1074,7 @@ async def test_expired_lock_items_return_to_original_priorities_multiple(mock_ac
     assert queue_2[0]["id"] == 4
 
     # Verify counts updated correctly
-    has_counts, counts = await mock_actor._state_manager.try_get_state("queue_counts")
-    assert counts["0"] == 1  # One item (one re-popped)
-    assert counts["1"] == 1
-    assert counts["2"] == 1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 1  # One item (one re-popped)
+    assert metadata["queues"]["queue_1"]["metadata"]["count"] == 1
+    assert metadata["queues"]["queue_2"]["metadata"]["count"] == 1

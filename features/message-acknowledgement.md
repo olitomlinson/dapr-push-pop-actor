@@ -23,7 +23,7 @@ The Message Acknowledgement feature adds at-least-once delivery semantics to the
 
 ### Lock State Management
 
-The lock is stored in the existing `queue_counts` state key using a reserved `_active_lock` key:
+The lock is stored in the existing `metadata` state key using a reserved `_active_lock` key:
 
 **State Schema:**
 ```json
@@ -86,7 +86,7 @@ async def PopWithAck(self, data: dict) -> dict
 4. Pops items while tracking priority metadata (doesn't use internal Pop method)
 5. If no items: returns unlocked empty result
 6. Creates lock with generated ID, TTL, and priority-aware item storage
-7. Stores lock in `queue_counts["_active_lock"]` with `items_with_priority` format
+7. Stores lock in `metadata["_active_lock"]` with `items_with_priority` format
 8. Returns locked result with lock_id (priority metadata hidden from client)
 
 **Example:**
@@ -365,7 +365,7 @@ curl -X POST "http://localhost:8000/queue/test/pop"
 - ~2-5ms additional latency
 
 **Acknowledge:**
-- 1 read + 1 write to queue_counts
+- 1 read + 1 write to metadata
 - ~3-5ms total latency
 
 **Expired Lock Cleanup:**
@@ -375,7 +375,7 @@ curl -X POST "http://localhost:8000/queue/test/pop"
 
 ### Lock Storage Overhead
 
-- Lock stored in existing `queue_counts` key (no new state key)
+- Lock stored in existing `metadata` key (no new state key)
 - Lock size: ~200-500 bytes depending on item count
 - Minimal impact on state store
 
@@ -420,7 +420,7 @@ bash examples/test_acknowledgement_flow.sh
 
 ### State Schema Changes
 
-- Adds `_active_lock` key to `queue_counts` (when lock is active)
+- Adds `_active_lock` key to `metadata` (when lock is active)
 - No migration required for existing actors
 - Lock automatically removed on acknowledgement or expiration
 
