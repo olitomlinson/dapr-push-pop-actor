@@ -7,7 +7,7 @@ It can be used as-is or serve as a reference implementation for your own project
 
 Endpoints:
 - POST /queue/{queueId}/push - Push item to queue with optional priority
-- POST /queue/{queueId}/pop?depth=N - Pop N items from queue (priority-ordered)
+- POST /queue/{queueId}/pop - Pop a single item from queue (priority-ordered)
 - GET /health - Health check
 """
 import asyncio
@@ -22,7 +22,8 @@ from dapr.actor.runtime.config import ActorRuntimeConfig
 from dapr.actor.runtime.runtime import ActorRuntime
 from dapr.ext.fastapi import DaprActor
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional
 
 from push_pop_actor import PushPopActor, PushPopActorInterface
 
@@ -54,8 +55,7 @@ class PushResponse(BaseModel):
 class PopResponse(BaseModel):
     """Response for pop operation."""
 
-    items: List[Dict[str, Any]]
-    count: int
+    item: Optional[Dict[str, Any]]  # Single item or None
 
 
 class HealthResponse(BaseModel):
@@ -63,6 +63,32 @@ class HealthResponse(BaseModel):
 
     status: str
     service: str
+
+
+class PopWithAckResponse(BaseModel):
+    """Response for pop operation with acknowledgement."""
+
+    items: List[Dict[str, Any]]
+    count: int
+    locked: bool
+    lock_id: Optional[str] = None
+    lock_expires_at: Optional[float] = None
+    message: Optional[str] = None
+
+
+class AcknowledgeRequest(BaseModel):
+    """Request body for acknowledging popped items."""
+
+    lock_id: str = Field(..., description="The lock ID to acknowledge")
+
+
+class AcknowledgeResponse(BaseModel):
+    """Response for acknowledge operation."""
+
+    success: bool
+    message: str
+    items_acknowledged: Optional[int] = None
+    error_code: Optional[str] = None
 
 
 # Create FastAPI app
@@ -147,23 +173,28 @@ async def push_item(queue_id: str, request: PushRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@app.post("/queue/{queue_id}/pop", response_model=PopResponse)
-async def pop_items(queue_id: str, depth: int = Query(1, ge=1, le=100)):
+@app.post("/queue/{queue_id}/pop")
+async def pop_item(
+    queue_id: str,
+    require_ack: bool = Query(False, description="Require acknowledgement for popped items"),
+    ttl_seconds: int = Query(30, ge=1, le=300, description="Lock TTL in seconds (1-300)")
+):
     """
-    Pop items from the queue.
+    Pop a single item from the queue.
 
     Args:
         queue_id: Unique identifier for the queue
-        depth: Number of items to pop (default: 1, max: 100)
+        require_ack: Whether to require acknowledgement (default: False)
+        ttl_seconds: Lock TTL in seconds if require_ack=True (default: 30, max: 300)
 
     Returns:
-        PopResponse: Popped items and count
+        PopResponse or PopWithAckResponse: Popped item
 
     Raises:
-        HTTPException: If the pop operation fails
+        HTTPException: If the pop operation fails or queue is locked (423)
     """
     try:
-        logger.info(f"Pop request for queue {queue_id} with depth {depth}")
+        logger.info(f"Pop request for queue {queue_id}, require_ack={require_ack}")
 
         # Create actor proxy
         proxy = ActorProxy.create(
@@ -172,13 +203,86 @@ async def pop_items(queue_id: str, depth: int = Query(1, ge=1, le=100)):
             actor_interface=PushPopActorInterface,
         )
 
-        # Pop items
-        items = await proxy.Pop(depth)
+        if require_ack:
+            # Pop with acknowledgement
+            result = await proxy.PopWithAck({"ttl_seconds": ttl_seconds})
 
-        return PopResponse(items=items, count=len(items))
+            # If locked by another operation, return 423
+            if result.get("locked") and result.get("count") == 0:
+                raise HTTPException(
+                    status_code=423,
+                    detail={
+                        "message": result.get("message"),
+                        "lock_expires_at": result.get("lock_expires_at")
+                    }
+                )
 
+            return PopWithAckResponse(**result)
+        else:
+            # Pop without acknowledgement
+            items = await proxy.Pop()
+            return PopResponse(item=items[0] if items else None)
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error popping items from queue {queue_id}: {e}", exc_info=True)
+        logger.error(f"Error popping item from queue {queue_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+
+@app.post("/queue/{queue_id}/acknowledge", response_model=AcknowledgeResponse)
+async def acknowledge_items(queue_id: str, request: AcknowledgeRequest):
+    """
+    Acknowledge popped items using lock ID.
+
+    This completes the pop-acknowledge cycle by validating the lock ID
+    and removing the lock from state. Items are already removed from the
+    queue during PopWithAck.
+
+    Args:
+        queue_id: Unique identifier for the queue
+        request: Acknowledge request containing the lock_id
+
+    Returns:
+        AcknowledgeResponse: Result of the acknowledge operation
+
+    Raises:
+        HTTPException: If the acknowledge operation fails:
+            - 400: Missing or invalid lock_id
+            - 404: Lock not found
+            - 410: Lock has expired
+    """
+    try:
+        logger.info(f"Acknowledge request for queue {queue_id} with lock_id {request.lock_id}")
+
+        # Create actor proxy
+        proxy = ActorProxy.create(
+            actor_type="PushPopActor",
+            actor_id=ActorId(queue_id),
+            actor_interface=PushPopActorInterface,
+        )
+
+        # Acknowledge items
+        result = await proxy.Acknowledge({"lock_id": request.lock_id})
+
+        # Return 410 Gone if lock expired
+        if not result["success"] and result.get("error_code") == "LOCK_EXPIRED":
+            raise HTTPException(status_code=410, detail=result)
+
+        # Return 404 if lock not found
+        if not result["success"] and "not found" in result.get("message", "").lower():
+            raise HTTPException(status_code=404, detail=result)
+
+        # Return 400 for other failures (invalid lock_id, missing lock_id)
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result)
+
+        return AcknowledgeResponse(**result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error acknowledging items for queue {queue_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 

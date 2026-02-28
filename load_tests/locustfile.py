@@ -13,7 +13,7 @@ in the web UI.
 # from scenarios.s2_pop_only import PopOnlyUser
 from scenarios.s3_mixed import MixedWorkloadUser
 # from scenarios.s4_concurrent import ConcurrentQueueUser
-# from scenarios.s5_queue_depth import QueueDepthUser
+# from scenarios.s5_queue_size import QueueSizeUser
 # from scenarios.s6_burst import BurstTrafficUser
 # from scenarios.s7_failure import FailureScenarioUser
 

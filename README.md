@@ -31,7 +31,7 @@ curl -X POST http://localhost:8000/queue/my-queue/push \
   -H "Content-Type: application/json" \
   -d '{"item": {"task": "hello"}, "priority": 0}'
 
-curl -X POST "http://localhost:8000/queue/my-queue/pop?depth=5"
+curl -X POST "http://localhost:8000/queue/my-queue/pop"
 ```
 
 ### Install as Library
@@ -55,8 +55,8 @@ proxy = ActorProxy.create(
 await proxy.Push({"item": {"task": "urgent"}, "priority": 0})    # High
 await proxy.Push({"item": {"task": "normal"}, "priority": 5})    # Low
 
-# Pop items (priority 0 comes first)
-items = await proxy.Pop(10)
+# Pop single item (priority 0 comes first)
+items = await proxy.Pop()  # Returns list with 1 item or []
 ```
 
 **See [docs/QUICKSTART.md](docs/QUICKSTART.md) for complete setup instructions and examples.**
@@ -89,9 +89,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 
 **Time Complexity:**
 - `Push`: O(1) amortized append operation
-- `Pop(depth)`: O(k + d) where k = number of priority levels with items, d = depth requested
-  - Scans priorities 0 → N to find items (O(k))
-  - Removes d items from front of queue (O(d))
+- `Pop()`: O(k) where k = number of priority levels with items
+  - Scans priorities 0 → N to find first item (O(k))
+  - Removes 1 item from front of queue (O(1))
 
 **Space Complexity:**
 - O(n) where n = total items in queue
@@ -104,7 +104,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 **Typical Performance:**
 - Small queues (<1000 items): Sub-millisecond in-memory operations
 - Large queues (>10k items): Dominated by state store latency (PostgreSQL: 1-5ms, Redis: <1ms)
-- Recommend batching with `Pop(depth=10-100)` to amortize I/O overhead
+- Pop retrieves one item per call; call multiple times for bulk processing
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for optimization strategies.
 

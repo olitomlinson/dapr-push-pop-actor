@@ -94,10 +94,9 @@ Example state for actor "my-queue":
 **Pop Operation:**
 1. Load `queue_counts` metadata to determine which priorities have items
 2. Sort priority keys numerically (0, 1, 2, ...)
-3. For each priority in order, load its queue (e.g., `queue_0`) and pop items from front
-4. Continue draining queues until depth is satisfied or all queues are empty
-5. Update all affected queue keys and `queue_counts`
-6. Save state and return collected items to caller
+3. For each priority in order, load its queue (e.g., `queue_0`) and pop single item from front
+4. Update the queue key and `queue_counts`
+5. Save state and return item to caller
 
 ## Actor Lifecycle
 

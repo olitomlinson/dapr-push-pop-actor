@@ -100,36 +100,32 @@ success = await actor.Push({"item": {"task": "important_task"}})
 
 **Signature:**
 ```python
-async def Pop(self, depth: int) -> List[Dict[str, Any]]
+async def Pop(self) -> List[Dict[str, Any]]
 ```
 
 **Parameters:**
-- `depth` (int): Number of items to retrieve
+- None
 
 **Returns:**
-- `List[Dict[str, Any]]`: Array of dictionaries (empty array if no items available)
+- `List[Dict[str, Any]]`: Array with single dictionary (empty array if no items available)
 
 **Behavior (Priority-Ordered Draining):**
 1. Loads `queue_counts` map
 2. Returns empty list if map is empty (no queues have items)
 3. Sorts priority keys numerically (0, 1, 2, ...)
-4. Initializes result list and remaining depth
-5. For each priority with non-zero count (in order):
+4. For each priority with non-zero count (in order):
    - Loads `queue_{priority}`
-   - Calculates items to pop: `min(remaining_depth, len(queue))`
-   - Pops items from front (FIFO)
-   - Updates queue (saves if items remain, sets to empty if drained)
+   - Pops single item from front (FIFO)
+   - Updates queue
    - Updates counts map (decrements or removes key if zero)
-   - Adds popped items to result
-   - Reduces remaining depth
-   - Breaks if depth satisfied
-6. Saves updated counts map
-7. Returns result list
+   - Saves updated counts map
+   - Returns item in a list
+5. Returns empty list if all queues are empty
 
 **Example:**
 ```python
-# Pop 5 items - will drain priority 0 first, then 1, then 2, etc.
-items = await actor.Pop(5)
+# Pop single item - will take from priority 0 first, then 1, then 2, etc.
+items = await actor.Pop()
 # Result: [p0_item1, p0_item2, p0_item3, p1_item1, p1_item2]
 ```
 
@@ -192,7 +188,7 @@ curl -X POST http://localhost:8000/queue/my-queue/push \
   -d '{"item": {"task": "background"}, "priority": 5}'
 
 # Pop items - priority 0 returned first
-curl -X POST "http://localhost:8000/queue/my-queue/pop?depth=10"
+curl -X POST "http://localhost:8000/queue/my-queue/pop"
 ```
 
 ## Edge Cases
@@ -236,7 +232,7 @@ await actor.Push({"item": {"data": "value"}})  # Defaults to priority 0
 - 2 state operations (queue + counts map)
 
 **Pop:**
-- O(P) where P = number of non-empty priority levels checked to satisfy depth
+- O(P) where P = number of non-empty priority levels checked to find first item
 - Best case: O(1) when all items in priority 0
 - Worst case: O(N) when items spread across N priorities
 

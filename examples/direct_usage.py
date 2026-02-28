@@ -45,22 +45,28 @@ async def main():
     # Pop items one at a time
     print("\n2. Popping items one at a time...")
     for i in range(2):
-        items = await proxy.Pop(1)
+        items = await proxy.Pop()
         if items:
             print(f"   ✓ Popped: {items[0]}")
         else:
             print("   ✗ Queue is empty")
 
-    # Pop remaining items in bulk
+    # Pop remaining items
     print("\n3. Popping all remaining items...")
-    items = await proxy.Pop(10)  # Pop up to 10 items
-    print(f"   ✓ Popped {len(items)} item(s)")
-    for item in items:
+    all_items = []
+    while True:
+        items = await proxy.Pop()
+        if not items:
+            break
+        all_items.extend(items)
+
+    print(f"   ✓ Popped {len(all_items)} item(s)")
+    for item in all_items:
         print(f"     - {item}")
 
     # Try to pop from empty queue
     print("\n4. Attempting to pop from empty queue...")
-    items = await proxy.Pop(5)
+    items = await proxy.Pop()
     if not items:
         print("   ✓ Queue is empty (as expected)")
 

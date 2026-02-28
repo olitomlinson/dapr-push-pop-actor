@@ -139,22 +139,20 @@ class BasePushPopUser(HttpUser):
     def pop_items(
         self,
         queue_id: Optional[str] = None,
-        depth: int = 1,
         name: Optional[str] = None
     ) -> list:
         """
-        Pop items from a queue with custom timing.
+        Pop a single item from a queue with custom timing.
 
         Args:
             queue_id: Queue ID (defaults to self.queue_id)
-            depth: Number of items to pop
             name: Custom name for metrics (defaults to "pop")
 
         Returns:
-            List of popped items (empty list on failure)
+            List with single item or empty list on failure
         """
         queue_id = queue_id or self.queue_id
-        name = name or f"pop_queue_{queue_id}_depth_{depth}"
+        name = name or f"pop_queue_{queue_id}"
 
         # High-resolution timing
         start_time = time.perf_counter()
@@ -162,7 +160,6 @@ class BasePushPopUser(HttpUser):
         try:
             with self.client.post(
                 f"/queue/{queue_id}/pop",
-                params={"depth": depth},
                 catch_response=True,
                 name=name
             ) as response:
@@ -170,15 +167,17 @@ class BasePushPopUser(HttpUser):
 
                 if response.status_code == 200:
                     data = response.json()
-                    items = data.get("items", [])
-                    count = data.get("count", 0)
+                    item = data.get("item")
 
                     # Update queue depth estimate
-                    self.queue_depth_estimate[queue_id] = \
-                        max(0, self.queue_depth_estimate.get(queue_id, 0) - count)
-
-                    response.success()
-                    return items
+                    if item is not None:
+                        self.queue_depth_estimate[queue_id] = \
+                            max(0, self.queue_depth_estimate.get(queue_id, 0) - 1)
+                        response.success()
+                        return [item]
+                    else:
+                        response.success()
+                        return []
                 else:
                     response.failure(f"Pop failed: {response.status_code} - {response.text}")
                     return []

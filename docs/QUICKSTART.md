@@ -50,7 +50,7 @@ curl -X POST http://localhost:8000/queue/my-queue/push \
   -d '{"item": {"task": "hello", "priority": "high"}}'
 
 # Pop items
-curl -X POST "http://localhost:8000/queue/my-queue/pop?depth=1"
+curl -X POST "http://localhost:8000/queue/my-queue/pop"
 ```
 
 ## Quick Start as Library
@@ -211,7 +211,7 @@ curl -X POST http://localhost:8000/queue/queue-1/push -d '{"item": {"data": 1}}'
 curl -X POST http://localhost:8000/queue/queue-2/push -d '{"item": {"data": 2}}'
 
 # They're independent
-curl -X POST "http://localhost:8000/queue/queue-1/pop?depth=10"  # Returns item 1 only
+curl -X POST "http://localhost:8000/queue/queue-1/pop0"  # Returns item 1 only
 ```
 
 ### Batch Processing
@@ -220,7 +220,7 @@ Pop multiple items at once:
 
 ```bash
 # Pop up to 50 items
-curl -X POST "http://localhost:8000/queue/batch-queue/pop?depth=50"
+curl -X POST "http://localhost:8000/queue/batch-queue/pop"
 ```
 
 ### Task Queue Pattern

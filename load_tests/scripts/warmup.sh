@@ -71,7 +71,7 @@ done
 echo "✓ OK (10 items)"
 
 echo -n "Warm-up: Popping test items... "
-curl -sf -X POST "$API_HOST/queue/$TEST_QUEUE/pop?depth=10" \
+curl -sf -X POST "$API_HOST/queue/$TEST_QUEUE/pop" \
     > /dev/null 2>&1 || {
         echo "✗ FAILED"
         exit 1
@@ -89,7 +89,7 @@ for priority in {0..2}; do
             exit 1
         }
 done
-curl -sf -X POST "$API_HOST/queue/$TEST_QUEUE/pop?depth=3" \
+curl -sf -X POST "$API_HOST/queue/$TEST_QUEUE/pop" \
     > /dev/null 2>&1 || {
         echo "✗ FAILED"
         exit 1

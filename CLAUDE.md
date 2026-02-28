@@ -46,7 +46,7 @@ from push_pop_actor import PushPopActor, PushPopActorInterface
 
 # Two methods only:
 async def Push(self, item: dict) -> bool    # Add to end (FIFO)
-async def Pop(self, depth: int) -> list     # Remove from front
+async def Pop(self) -> list                  # Remove single item from front
 ```
 
 ### Usage Modes
@@ -107,7 +107,7 @@ dapr-push-pop-server --host 0.0.0.0        # API server only
 
 ### REST API Endpoints
 - `POST /queue/{queueId}/push` - Push item
-- `POST /queue/{queueId}/pop?depth=N` - Pop N items
+- `POST /queue/{queueId}/pop` - Pop single item
 - `GET /health` - Health check
 
 ## Development Conventions

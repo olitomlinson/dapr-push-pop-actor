@@ -8,7 +8,7 @@ This framework uses [Locust](https://locust.io/) to measure:
 - **Latency metrics** (p50, p95, p99) for push/pop operations
 - **Throughput** (requests/sec, items/sec)
 - **Error rates** under various load conditions
-- **Queue depth impact** on performance
+- **Queue size impact** on performance
 - **Priority queue performance**
 - **Resource utilization** (CPU, memory, database)
 
@@ -91,7 +91,7 @@ docker-compose run --rm locust \
 **Implementation notes:**
 - No pop operations - pure write workload
 - Measures state store insert performance
-- Queue depth grows indefinitely (cleanup needed after test)
+- Queue size grows indefinitely (cleanup needed after test)
 - Use for establishing write-only baseline
 
 ### S2: Pop-Only Workload (To Be Implemented)
@@ -104,17 +104,17 @@ docker-compose run --rm locust \
 
 | Variant | Setup | Description | Target RPS |
 |---------|-------|-------------|------------|
-| **S2a** | 10K items, 1 priority | Pop depth=1, ramp 10→100 RPS | 10-100 |
-| **S2b** | 10K items, 3 priorities | Pop depth=10, 50 RPS | 50 |
-| **S2c** | 10K items, 3 priorities | Pop depth=100 (max), 20 RPS | 20 |
+| **S2a** | 10K items, 1 priority | Single-item pop, ramp 10→100 RPS | 10-100 |
+| **S2b** | 10K items, 3 priorities | Single-item pop, 50 RPS | 50 |
+| **S2c** | 10K items, 3 priorities | Single-item pop, 20 RPS | 20 |
 
-**Expected bottleneck:** CPU (list slicing), PostgreSQL reads
+**Expected bottleneck:** CPU (list operations), PostgreSQL reads
 
 **Implementation notes:**
 - Pre-populate queue before test starts
-- Measures state retrieval + list manipulation overhead
+- Measures state retrieval + single item extraction overhead
 - Pop across priorities tests worst-case complexity
-- Queue depth decreases - monitor when empty
+- Queue size decreases - monitor when empty
 
 ### S4: Concurrent Queue Scaling (To Be Implemented)
 
@@ -137,24 +137,24 @@ docker-compose run --rm locust \
 - Tests Dapr placement service under load
 - Monitor PostgreSQL connection count
 
-### S5: Queue Depth Impact (To Be Implemented)
+### S5: Queue Size Impact (To Be Implemented)
 
 **Purpose:** Measure latency degradation with large queues
 
-**File:** `scenarios/s5_queue_depth.py`
+**File:** `scenarios/s5_queue_size.py`
 
 | Variant | Pre-population | Test Operation | Expected Result |
 |---------|----------------|----------------|-----------------|
-| **S5a** | 0 items | Pop depth=10, 50 RPS | Baseline (empty queue) |
-| **S5b** | 1K items | Pop depth=10, 50 RPS | Slight increase |
-| **S5c** | 10K items | Pop depth=10, 50 RPS | Moderate increase |
-| **S5d** | 100K items | Pop depth=10, 50 RPS | Significant increase |
+| **S5a** | 0 items | Single-item pop, 50 RPS | Baseline (empty queue) |
+| **S5b** | 1K items | Single-item pop, 50 RPS | Slight increase |
+| **S5c** | 10K items | Single-item pop, 50 RPS | Moderate increase |
+| **S5d** | 100K items | Single-item pop, 50 RPS | Significant increase |
 
-**Expected bottleneck:** List slicing operations (O(n) complexity)
+**Expected bottleneck:** List operations, state store serialization overhead
 
 **Implementation notes:**
-- Pre-populate queues with varying depths
-- Measure pop latency at each depth
+- Pre-populate queues with varying sizes
+- Measure pop latency at each size
 - Tests memory and serialization overhead
 - Useful for capacity planning
 
@@ -191,9 +191,8 @@ docker-compose run --rm locust \
 |---------|--------------|-------------------|
 | **S7a** | Invalid payloads (non-dict items) | 400 errors, no crashes |
 | **S7b** | Negative priorities | 400 errors, validation works |
-| **S7c** | Pop depth > 100 | 400 errors, enforces limit |
-| **S7d** | PostgreSQL restart | 500 errors, then recovery |
-| **S7e** | Dapr sidecar restart | Connection errors, auto-reconnect |
+| **S7c** | PostgreSQL restart | 500 errors, then recovery |
+| **S7d** | Dapr sidecar restart | Connection errors, auto-reconnect |
 
 **Expected behavior:** Graceful degradation, no data loss
 
@@ -232,13 +231,13 @@ docker-compose run --rm locust \
 - [ ] **S1c**: Push-only, multi-priority
 
 ### Phase 4: Read-Heavy Scenarios (Requires Phase 2)
-- [ ] **S2a**: Pop-only, depth=1
-- [ ] **S2b**: Pop-only, depth=10
-- [ ] **S2c**: Pop-only, depth=100
+- [ ] **S2a**: Pop-only, single-item
+- [ ] **S2b**: Pop-only, single-item
+- [ ] **S2c**: Pop-only, single-item
 
 ### Phase 5: Scaling Tests
 - [ ] **S4a-d**: Concurrent queue scaling (1, 10, 50, 100 queues)
-- [ ] **S5a-d**: Queue depth impact (0, 1K, 10K, 100K items)
+- [ ] **S5a-d**: Queue size impact (0, 1K, 10K, 100K items)
 
 ### Phase 6: Advanced Patterns
 - [ ] **S6a**: Burst traffic - sine wave
@@ -256,7 +255,7 @@ docker-compose run --rm locust \
 ```
 queue_prepopulator.py
     ├─→ S2 (Pop-only)
-    └─→ S5 (Queue depth)
+    └─→ S5 (Queue size)
 
 resource_monitor.py
     └─→ All scenarios (enhanced metrics)
@@ -273,9 +272,9 @@ S4 (Concurrent)
 1. **`utils/queue_prepopulator.py`** - Enables S2 and S5
 2. **S1 (Push-only)** - Simple, no dependencies
 3. **S2 (Pop-only)** - Uses prepopulator
-4. **`utils/resource_monitor.py`** - Adds depth to all tests
+4. **`utils/resource_monitor.py`** - Adds monitoring to all tests
 5. **S4 (Concurrent)** - Tests horizontal scaling
-6. **S5 (Queue depth)** - Uses prepopulator
+6. **S5 (Queue size)** - Uses prepopulator
 7. **`scripts/analyze_results.py`** - Automates comparison
 8. **S6 (Burst)** - Advanced patterns
 9. **S7 (Failure)** - Most complex
@@ -365,7 +364,7 @@ open http://localhost:8089
 ### Throughput Metrics
 
 - **Requests/second** - Total API requests (push + pop)
-- **Items/second** - Actual items processed (pop depth matters)
+- **Items/second** - Actual items processed
 - **Concurrent users** - Simulated users making requests
 
 ### Error Metrics
@@ -381,14 +380,12 @@ Based on architecture (PostgreSQL state store, no caching):
 | Operation | p50 | p95 | p99 | Notes |
 |-----------|-----|-----|-----|-------|
 | **Push** | 15-25ms | 20-50ms | 30-80ms | PostgreSQL write latency |
-| **Pop (depth=1)** | 20-30ms | 30-80ms | 50-120ms | Read + list slicing |
-| **Pop (depth=10)** | 25-40ms | 40-100ms | 60-150ms | More list operations |
-| **Pop (depth=100)** | 40-60ms | 60-150ms | 100-250ms | Significant CPU work |
+| **Pop (single)** | 20-30ms | 30-80ms | 50-120ms | Read + item extraction |
 
 **Note:** Actual performance depends on:
 - Hardware resources
 - PostgreSQL configuration
-- Queue depth
+- Queue size
 - Number of priorities
 - Concurrent actors
 
@@ -493,9 +490,9 @@ Edit `scenarios/base.py` to add custom tracking:
 # Track custom metric
 self.environment.events.request.fire(
     request_type="custom",
-    name="queue_depth_check",
+    name="queue_size_check",
     response_time=duration_ms,
-    response_length=queue_depth,
+    response_length=queue_size,
     exception=None
 )
 ```
@@ -586,7 +583,7 @@ load_tests/
 │   ├── s2_pop_only.py         # ⏳ Pop-only workload (requires prepopulator)
 │   ├── s3_mixed.py            # ✅ Mixed push/pop (5 variants, implemented)
 │   ├── s4_concurrent.py       # ⏳ Concurrent queue scaling
-│   ├── s5_queue_depth.py      # ⏳ Queue depth impact tests
+│   ├── s5_queue_size.py       # ⏳ Queue size impact tests
 │   ├── s6_burst.py            # ⏳ Burst traffic patterns
 │   └── s7_failure.py          # ⏳ Failure/error scenarios
 │
@@ -616,7 +613,7 @@ Legend: ✅ Implemented | ⏳ To be implemented
 | **S2** | Pop-Only | ⏳ | `s2_pop_only.py` | Read performance baseline |
 | **S3** | Mixed Push/Pop | ✅ | `s3_mixed.py` | Realistic steady-state |
 | **S4** | Concurrent Queues | ⏳ | `s4_concurrent.py` | Horizontal scaling |
-| **S5** | Queue Depth | ⏳ | `s5_queue_depth.py` | Capacity planning |
+| **S5** | Queue Size | ⏳ | `s5_queue_size.py` | Capacity planning |
 | **S6** | Burst Traffic | ⏳ | `s6_burst.py` | Irregular load patterns |
 | **S7** | Failure Testing | ⏳ | `s7_failure.py` | Error handling/recovery |
 

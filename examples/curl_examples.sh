@@ -67,22 +67,22 @@ echo
 
 # Pop single item
 echo "3. Pop Single Item"
-echo "POST $API_BASE/queue/$ACTOR_ID/pop?depth=1"
-curl -s -X POST "$API_BASE/queue/$ACTOR_ID/pop?depth=1" | jq '.'
+echo "POST $API_BASE/queue/$ACTOR_ID/pop"
+curl -s -X POST "$API_BASE/queue/$ACTOR_ID/pop" | jq '.'
 echo
 echo
 
 # Pop multiple items
 echo "4. Pop Multiple Items"
-echo "POST $API_BASE/queue/$ACTOR_ID/pop?depth=5"
-curl -s -X POST "$API_BASE/queue/$ACTOR_ID/pop?depth=5" | jq '.'
+echo "POST $API_BASE/queue/$ACTOR_ID/pop"
+curl -s -X POST "$API_BASE/queue/$ACTOR_ID/pop" | jq '.'
 echo
 echo
 
 # Pop from empty queue
 echo "5. Pop from Empty Queue"
-echo "POST $API_BASE/queue/$ACTOR_ID/pop?depth=1"
-curl -s -X POST "$API_BASE/queue/$ACTOR_ID/pop?depth=1" | jq '.'
+echo "POST $API_BASE/queue/$ACTOR_ID/pop"
+curl -s -X POST "$API_BASE/queue/$ACTOR_ID/pop" | jq '.'
 echo
 echo
 
@@ -154,8 +154,8 @@ echo
 echo
 
 echo "Pop all items - notice priority 0 items returned first, then 2, then 5..."
-echo "POST $API_BASE/queue/$PRIORITY_ACTOR/pop?depth=10"
-curl -s -X POST "$API_BASE/queue/$PRIORITY_ACTOR/pop?depth=10" | jq '.'
+echo "POST $API_BASE/queue/$PRIORITY_ACTOR/pop0"
+curl -s -X POST "$API_BASE/queue/$PRIORITY_ACTOR/pop0" | jq '.'
 echo
 echo
 
@@ -167,5 +167,5 @@ echo "  - Items are processed in FIFO order within each priority level"
 echo "  - Priority 0 = highest priority (always dequeued first)"
 echo "  - Pop drains priority 0 completely before moving to priority 1, etc."
 echo "  - You can have multiple actor instances with different IDs"
-echo "  - Use depth parameter to control how many items to pop at once"
+echo "  - Pop returns a single item per call - loop to process multiple items"
 echo "  - Priority levels are unbounded (0, 1, 2, ..., N)"

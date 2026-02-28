@@ -50,7 +50,7 @@ class MixedWorkloadUser(BasePushPopUser):
     @task(50)
     def pop_operation(self):
         """Pop a single item (50% weight)."""
-        items = self.pop_items(depth=1)
+        items = self.pop_items()
 
         # Track empty queue occurrences
         if not items:
@@ -87,8 +87,8 @@ class ProducerHeavyUser(BasePushPopUser):
     @task(20)
     def pop_operation(self):
         """Pop items less frequently (20% weight)."""
-        # Pop in batches of 5 to be more efficient
-        items = self.pop_items(depth=5)
+        # Pop single item per call
+        items = self.pop_items()
 
 
 class ConsumerHeavyUser(BasePushPopUser):
@@ -121,7 +121,7 @@ class ConsumerHeavyUser(BasePushPopUser):
     def pop_operation(self):
         """Pop items frequently (80% weight)."""
         # Pop single items for more granular consumption
-        items = self.pop_items(depth=1)
+        items = self.pop_items()
 
         # Track empty queue - expected in consumer-heavy scenario
         if not items:
@@ -160,7 +160,7 @@ class MultiPriorityMixedUser(BasePushPopUser):
     @task(50)
     def pop_by_priority(self):
         """Pop items (will get priority 0 first, then 1, etc.)."""
-        items = self.pop_items(depth=1)
+        items = self.pop_items()
 
 
 class BalancedLargeItemsUser(BasePushPopUser):
@@ -197,8 +197,11 @@ class BalancedLargeItemsUser(BasePushPopUser):
 
     @task(50)
     def pop_items_batch(self):
-        """Pop items in batches of 3."""
-        items = self.pop_items(depth=3)
+        """Pop multiple items (3 individual pops)."""
+        for _ in range(3):
+            items = self.pop_items()
+            if not items:
+                break
 
 
 # Export all variants
