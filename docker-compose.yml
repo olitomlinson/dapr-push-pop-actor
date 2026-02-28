@@ -25,6 +25,29 @@ services:
       start_period: 10s
 
   ############################
+  # pgAdmin (Database Management UI)
+  ############################
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: always
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@admin.com
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./dapr/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./dapr/pgadmin/pgpassfile:/tmp/pgpassfile:ro
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    networks:
+      - pushpop-network
+
+  ############################
   # Dapr Placement Service
   ############################
   placement:
@@ -164,4 +187,6 @@ networks:
 
 volumes:
   postgres-db-data:
+    driver: local
+  pgadmin-data:
     driver: local
