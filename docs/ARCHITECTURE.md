@@ -52,31 +52,52 @@ Actor state is persisted in a Dapr state store component:
 
 ### State Schema
 
-Each actor stores one key in the state store:
+Each actor stores multiple keys in the state store based on priority levels:
 
-**Key**: `"queue"`
-**Value**: JSON array of dictionaries
+**Priority Queue Keys**: `queue_0`, `queue_1`, `queue_2`, ..., `queue_N`
+**Value**: JSON array of dictionaries (FIFO-ordered items at that priority)
+
+**Metadata Key**: `queue_counts`
+**Value**: JSON object mapping priority levels to item counts
+
+Example state for actor "my-queue":
 
 ```json
+// queue_0 (highest priority)
 [
-  {"id": 1, "task": "send_email", "priority": "high"},
-  {"id": 2, "task": "process_upload", "priority": "normal"},
-  {"id": 3, "task": "generate_report", "priority": "low"}
+  {"task": "urgent_email", "user_id": 123},
+  {"task": "critical_alert", "severity": "high"}
 ]
+
+// queue_1
+[
+  {"task": "process_upload", "file_id": 456},
+  {"task": "generate_report", "type": "monthly"}
+]
+
+// queue_counts (metadata)
+{
+  "0": 2,
+  "1": 2
+}
 ```
 
 ### State Operations
 
 **Push Operation:**
-1. Load current queue from state store
-2. Append new item to end of array
-3. Save updated array back to state store
+1. Extract item and priority from request (default priority: 0)
+2. Load queue for that priority level (e.g., `queue_1`) from state store
+3. Append new item to end of array
+4. Update `queue_counts` metadata map
+5. Save both the queue and counts back to state store
 
 **Pop Operation:**
-1. Load current queue from state store
-2. Slice first N items from array
-3. Save remaining items back to state store
-4. Return sliced items to caller
+1. Load `queue_counts` metadata to determine which priorities have items
+2. Sort priority keys numerically (0, 1, 2, ...)
+3. For each priority in order, load its queue (e.g., `queue_0`) and pop items from front
+4. Continue draining queues until depth is satisfied or all queues are empty
+5. Update all affected queue keys and `queue_counts`
+6. Save state and return collected items to caller
 
 ## Actor Lifecycle
 
@@ -334,7 +355,7 @@ metadata:
 
 - **Not a Message Broker**: No pub/sub, routing, or dead letter queues
 - **In-Memory Queue**: All items loaded into memory during pop
-- **No Prioritization**: Items are strictly FIFO
+- **Priority-Based Ordering**: Items are FIFO within each priority level (0 = highest priority)
 - **No Transactions**: Push/Pop are separate operations
 - **State Store Dependency**: Requires configured Dapr state store
 

@@ -78,6 +78,11 @@ Each queue is a Dapr actor instance with:
 - **Single-threaded**: No race conditions per queue instance
 - **Distributed**: Scale across multiple app instances
 
+### Architecture Overview
+
+
+Each actor instance maintains separate state keys (`queue_0`, `queue_1`, etc.) for each priority level, plus a `queue_counts` metadata map for efficient lookups. Pop operations drain from priority 0 completely before moving to priority 1, and so on.
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 
 ## Performance
