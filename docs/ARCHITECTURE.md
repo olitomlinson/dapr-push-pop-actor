@@ -52,51 +52,82 @@ Actor state is persisted in a Dapr state store component:
 
 ### State Schema
 
-Each actor stores multiple keys in the state store based on priority levels:
+Each actor uses a **segmented queue architecture** where priority queues are split into fixed-size segments (default: 100 items per segment):
 
-**Priority Queue Keys**: `queue_0`, `queue_1`, `queue_2`, ..., `queue_N`
-**Value**: JSON array of dictionaries (FIFO-ordered items at that priority)
+**Segment Keys**: `queue_0_seg_0`, `queue_0_seg_1`, `queue_1_seg_0`, etc.
+**Value**: JSON array of dictionaries (max 100 items per segment)
 
 **Metadata Key**: `metadata`
-**Value**: JSON object mapping priority levels to item counts
+**Value**: JSON object with config and queue metadata including segment pointers
 
-Example state for actor "my-queue":
+Example state for actor "my-queue" with 250 items in priority 0:
 
 ```json
-// queue_0 (highest priority)
+// queue_0_seg_0 (first segment, being popped from)
 [
   {"task": "urgent_email", "user_id": 123},
-  {"task": "critical_alert", "severity": "high"}
+  {"task": "critical_alert", "severity": "high"},
+  ... // 98 more items
 ]
 
-// queue_1
+// queue_0_seg_1 (second segment, full)
 [
-  {"task": "process_upload", "file_id": 456},
-  {"task": "generate_report", "type": "monthly"}
+  {"task": "process_data", "id": 101},
+  ... // 99 more items
 ]
 
-// metadata (metadata)
+// queue_0_seg_2 (third segment, being pushed to)
+[
+  {"task": "final_item", "id": 250}
+]
+
+// metadata
 {
-  "0": 2,
-  "1": 2
+  "config": {
+    "segment_size": 100
+  },
+  "queues": {
+    "queue_0": {
+      "metadata": {
+        "count": 250,
+        "head_segment": 0,
+        "tail_segment": 2
+      }
+    }
+  }
 }
 ```
+
+**Segment Pointers**:
+- `head_segment`: Segment to pop from (oldest items)
+- `tail_segment`: Segment to push to (newest items)
+- `count`: Total items across all segments
 
 ### State Operations
 
 **Push Operation:**
 1. Extract item and priority from request (default priority: 0)
-2. Load queue for that priority level (e.g., `queue_1`) from state store
-3. Append new item to end of array
-4. Update `metadata` metadata map
-5. Save both the queue and metadata back to state store
+2. Load metadata and get tail segment number for priority
+3. Load tail segment (e.g., `queue_0_seg_2`) from state store
+4. If segment is full (100 items), allocate new segment (increment tail pointer)
+5. Append new item to tail segment
+6. Update metadata (count, tail pointer)
+7. Save segment and metadata atomically
 
 **Pop Operation:**
-1. Load `metadata` metadata to determine which priorities have items
+1. Load metadata to determine which priorities have items
 2. Sort priority keys numerically (0, 1, 2, ...)
-3. For each priority in order, load its queue (e.g., `queue_0`) and pop single item from front
-4. Update the queue key and metadata map
-5. Save state and return item to caller
+3. For each priority in order, load head segment (e.g., `queue_0_seg_0`)
+4. Pop single item from front of segment
+5. If segment becomes empty:
+   - If more segments exist: increment head pointer, don't save empty segment
+   - If last segment: delete queue metadata
+6. Save updated segment (if not empty) and metadata
+
+**Benefits of Segmentation:**
+- **Memory**: Load max 100 items per operation instead of entire queue
+- **Network**: Serialize max 100 items instead of N items per save
+- **Performance**: Pop becomes O(1) instead of O(N) for list slicing
 
 ## Actor Lifecycle
 
@@ -311,10 +342,11 @@ metadata:
 ## Limitations
 
 - **Not a Message Broker**: No pub/sub, routing, or dead letter queues
-- **In-Memory Queue**: All items loaded into memory during pop
+- **Segmented Storage**: Max 100 items loaded into memory per operation (configurable)
 - **Priority-Based Ordering**: Items are FIFO within each priority level (0 = highest priority)
 - **No Transactions**: Push/Pop are separate operations
 - **State Store Dependency**: Requires configured Dapr state store
+- **Breaking Change**: Segmented queues incompatible with pre-v4.0 state format
 
 ## Further Reading
 

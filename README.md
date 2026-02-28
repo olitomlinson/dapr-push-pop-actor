@@ -77,11 +77,13 @@ Each queue is a Dapr actor instance with:
 - **FIFO within priority**: Items at the same priority are processed in order
 - **Single-threaded**: No race conditions per queue instance
 - **Distributed**: Scale across multiple app instances
+- **Segmented storage** (v4.0+): Queues split into 100-item segments for optimal performance
 
 ### Architecture Overview
 
+Each actor instance uses a **segmented queue architecture** (v4.0+) where large queues are split into fixed-size segments (default: 100 items). This prevents memory/network bottlenecks when queues grow large.
 
-Each actor instance maintains separate state keys (`queue_0`, `queue_1`, etc.) for each priority level, plus a `metadata` map for efficient lookups. Pop operations drain from priority 0 completely before moving to priority 1, and so on.
+State is stored as: `queue_0_seg_0`, `queue_0_seg_1`, `queue_1_seg_0`, etc., plus a `metadata` map with segment pointers. Pop operations drain from priority 0 completely before moving to priority 1, and so on.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 
@@ -91,19 +93,24 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 - `Push`: O(1) amortized append operation
 - `Pop()`: O(k) where k = number of priority levels with items
   - Scans priorities 0 → N to find first item (O(k))
-  - Removes 1 item from front of queue (O(1))
+  - Removes 1 item from front of segment (O(1))
 
 **Space Complexity:**
 - O(n) where n = total items in queue
-- State stored as serialized list in Dapr state store
+- **Segmented storage** (v4.0+): Max 100 items loaded per operation (vs entire queue)
 
 **I/O Operations:**
-- Push: 1 state store write per operation
-- Pop: 1 state store read + 1 write per operation
+- Push: 2 state store operations (segment + metadata)
+- Pop: 2 state store operations (segment + metadata)
+
+**Memory Efficiency:**
+- **Small queues** (<100 items): 1 segment, minimal overhead
+- **Large queues** (10k+ items): Load max 100 items per operation (vs 10k in v3.x)
+  - Example: 10,000 item queue uses ~10-50KB memory per operation (was 1-5MB)
 
 **Typical Performance:**
 - Small queues (<1000 items): Sub-millisecond in-memory operations
-- Large queues (>10k items): Dominated by state store latency (PostgreSQL: 1-5ms, Redis: <1ms)
+- Large queues (>10k items): Constant-time operations regardless of queue size
 - Pop retrieves one item per call; call multiple times for bulk processing
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for optimization strategies.

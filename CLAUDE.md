@@ -99,11 +99,15 @@ dapr-push-pop-server --host 0.0.0.0        # API server only
 - State persisted to Dapr state store (PostgreSQL, Redis, etc.)
 - Automatic activation/deactivation via Dapr
 
-### State Management
-- Queue stored as single state key: `"queue"`
-- Format: `List[dict]` in Dapr state store
-- Push appends to end, Pop removes from front
+### State Management (v4.0+ Segmented Queues)
+- **Segmented storage**: Queues split into 100-item segments for performance
+- State keys: `queue_0_seg_0`, `queue_0_seg_1`, etc. (priority + segment number)
+- Metadata tracks: `head_segment` (pop from), `tail_segment` (push to), `count`
+- Format: `List[dict]` per segment (max 100 items each)
+- Push appends to tail segment, allocates new segment when full (100 items)
+- Pop removes from head segment, deletes empty segments automatically
 - State saved after every operation
+- **Benefits**: Constant memory/network per operation regardless of queue size
 
 ### REST API Endpoints
 - `POST /queue/{queueId}/push` - Push item

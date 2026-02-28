@@ -131,6 +131,34 @@ class PushPopActor(Actor, PushPopActorInterface):
                     continue
         return sorted(priorities)
 
+    def _get_segment_key(self, priority: int, segment: int) -> str:
+        """Build segment key: queue_0_seg_0"""
+        return f"queue_{priority}_seg_{segment}"
+
+    def _get_segment_size(self, metadata: dict) -> int:
+        """Get configured segment size (default 100)"""
+        return metadata.get("config", {}).get("segment_size", 100)
+
+    def _get_head_segment(self, metadata: dict, priority: int) -> int:
+        """Get head segment number for priority (default 0)"""
+        queue_key = f"queue_{priority}"
+        return metadata.get("queues", {}).get(queue_key, {}).get("metadata", {}).get("head_segment", 0)
+
+    def _get_tail_segment(self, metadata: dict, priority: int) -> int:
+        """Get tail segment number for priority (default 0)"""
+        queue_key = f"queue_{priority}"
+        return metadata.get("queues", {}).get(queue_key, {}).get("metadata", {}).get("tail_segment", 0)
+
+    def _set_segment_pointers(self, metadata: dict, priority: int, head: int, tail: int) -> None:
+        """Update head/tail segment pointers"""
+        queue_key = f"queue_{priority}"
+        if "queues" not in metadata:
+            metadata["queues"] = {}
+        if queue_key not in metadata["queues"]:
+            metadata["queues"][queue_key] = {"metadata": {}}
+        metadata["queues"][queue_key]["metadata"]["head_segment"] = head
+        metadata["queues"][queue_key]["metadata"]["tail_segment"] = tail
+
     async def _on_activate(self) -> None:
         """
         Called when the actor is activated.
@@ -141,9 +169,12 @@ class PushPopActor(Actor, PushPopActorInterface):
         # Check if metadata exists, if not initialize it
         has_metadata, _ = await self._state_manager.try_get_state("metadata")
         if not has_metadata:
-            await self._state_manager.set_state("metadata", {"queues": {}})
+            await self._state_manager.set_state("metadata", {
+                "config": {"segment_size": 100},
+                "queues": {}
+            })
             await self._state_manager.save_state()
-            logger.info(f"Initialized empty metadata map for actor {self.actor_id}")
+            logger.info(f"Initialized empty metadata map with segment config for actor {self.actor_id}")
 
     async def Push(self, data: Dict[str, Any]) -> bool:
         """
@@ -172,32 +203,44 @@ class PushPopActor(Actor, PushPopActorInterface):
                 logger.error(f"Push failed: priority must be non-negative integer, got {priority}")
                 return False
 
-            # Construct queue key for this priority level
-            queue_key = f"queue_{priority}"
-
-            # Get queue for this priority level (or create empty)
-            has_queue, queue = await self._state_manager.try_get_state(queue_key)
-            if not has_queue:
-                queue = []
-
-            # Push item to queue (append to end)
-            queue.append(item)
-
-            # Update metadata map
+            # Load metadata map
             has_metadata, metadata = await self._state_manager.try_get_state("metadata")
             if not has_metadata:
-                metadata = {"queues": {}}
+                metadata = {"config": {"segment_size": 100}, "queues": {}}
 
+            # Get tail segment number for this priority
+            tail_segment = self._get_tail_segment(metadata, priority)
+            segment_key = self._get_segment_key(priority, tail_segment)
+
+            # Load tail segment (or create empty)
+            has_segment, segment = await self._state_manager.try_get_state(segment_key)
+            if not has_segment:
+                segment = []
+
+            # Check if segment is full
+            segment_size = self._get_segment_size(metadata)
+            if len(segment) >= segment_size:
+                # Allocate new segment
+                tail_segment += 1
+                segment_key = self._get_segment_key(priority, tail_segment)
+                segment = []
+
+            # Append item to segment (FIFO)
+            segment.append(item)
+
+            # Update metadata (count and pointers)
             current_count = self._get_queue_count(metadata, priority)
+            head_segment = self._get_head_segment(metadata, priority)
             self._set_queue_count(metadata, priority, current_count + 1)
+            self._set_segment_pointers(metadata, priority, head_segment, tail_segment)
 
-            # Save both queue and metadata map
-            await self._state_manager.set_state(queue_key, queue)
+            # Save segment and metadata
+            await self._state_manager.set_state(segment_key, segment)
             await self._state_manager.set_state("metadata", metadata)
             await self._state_manager.save_state()
 
             logger.info(
-                f"Pushed item to priority {priority} queue for actor {self.actor_id}. Queue size: {len(queue)}, Total metadata: {metadata}"
+                f"Pushed item to priority {priority} segment {tail_segment} for actor {self.actor_id}. Segment size: {len(segment)}, Total count: {current_count + 1}"
             )
             return True
 
@@ -230,36 +273,66 @@ class PushPopActor(Actor, PushPopActorInterface):
                 if count == 0:
                     continue
 
-                # Load queue for this priority
-                queue_key = f"queue_{priority}"
-                has_queue, queue = await self._state_manager.try_get_state(queue_key)
+                # Get head and tail segment numbers
+                head_segment = self._get_head_segment(metadata, priority)
+                tail_segment = self._get_tail_segment(metadata, priority)
+                segment_key = self._get_segment_key(priority, head_segment)
 
-                if not has_queue or not queue:
+                # Load head segment
+                has_segment, segment = await self._state_manager.try_get_state(segment_key)
+
+                if not has_segment or not segment:
                     # Defensive: fix count desync
                     logger.warning(f"Count desync detected for priority {priority}, fixing...")
                     self._delete_queue_metadata(metadata, priority)
                     continue
 
                 # Pop single item from front
-                item = queue[0]
-                queue = queue[1:]
+                item = segment[0]
+                segment = segment[1:]
 
-                # Update state
-                await self._state_manager.set_state(queue_key, queue)
+                # Get the segment number before any modifications (for logging)
+                popped_from_segment = head_segment
 
-                # Update metadata map
+                # Handle segment cleanup
+                if len(segment) == 0:
+                    if head_segment < tail_segment:
+                        # More segments exist, move to next
+                        # Clear the empty segment from state
+                        await self._state_manager.set_state(segment_key, [])
+                        head_segment += 1
+                        # Update metadata pointers
+                        new_count = count - 1
+                        self._set_queue_count(metadata, priority, new_count)
+                        self._set_segment_pointers(metadata, priority, head_segment, tail_segment)
+                        await self._state_manager.set_state("metadata", metadata)
+                        await self._state_manager.save_state()
+                        logger.info(
+                            f"Popped 1 item from priority {priority} segment {popped_from_segment} (now empty, moved to segment {head_segment}). Remaining count: {new_count}"
+                        )
+                        return [item]
+                    else:
+                        # Last segment empty, queue is now empty
+                        # Clear the segment from state (set to empty list to effectively delete it)
+                        await self._state_manager.set_state(segment_key, [])
+                        self._delete_queue_metadata(metadata, priority)
+                        await self._state_manager.set_state("metadata", metadata)
+                        await self._state_manager.save_state()
+                        logger.info(
+                            f"Popped last item from priority {priority} for actor {self.actor_id}. Queue now empty."
+                        )
+                        return [item]
+
+                # Save updated segment and metadata (segment not empty)
+                await self._state_manager.set_state(segment_key, segment)
                 new_count = count - 1
-                if new_count == 0:
-                    self._delete_queue_metadata(metadata, priority)
-                else:
-                    self._set_queue_count(metadata, priority, new_count)
-
-                # Save updated metadata map
+                self._set_queue_count(metadata, priority, new_count)
+                self._set_segment_pointers(metadata, priority, head_segment, tail_segment)
                 await self._state_manager.set_state("metadata", metadata)
                 await self._state_manager.save_state()
 
                 logger.info(
-                    f"Popped 1 item from priority {priority} for actor {self.actor_id}. Remaining metadata: {metadata}"
+                    f"Popped 1 item from priority {priority} segment {popped_from_segment} for actor {self.actor_id}. Remaining count: {new_count}"
                 )
                 return [item]
 
@@ -294,29 +367,35 @@ class PushPopActor(Actor, PushPopActorInterface):
             # Load current metadata
             has_metadata, metadata = await self._state_manager.try_get_state("metadata")
             if not has_metadata:
-                metadata = {"queues": {}}
+                metadata = {"config": {"segment_size": 100}, "queues": {}}
 
-            # Return items to each priority queue
+            # Return items to each priority queue (prepend to head segment)
             for priority, items in items_by_priority.items():
-                queue_key = f"queue_{priority}"
+                # Get head segment for this priority
+                head_segment = self._get_head_segment(metadata, priority)
+                segment_key = self._get_segment_key(priority, head_segment)
 
-                # Load existing queue
-                has_queue, queue = await self._state_manager.try_get_state(queue_key)
-                if not has_queue:
-                    queue = []
+                # Load existing head segment
+                has_segment, segment = await self._state_manager.try_get_state(segment_key)
+                if not has_segment:
+                    segment = []
 
                 # Prepend items to front (FIFO, they were already popped)
-                queue = items + queue
+                # Note: Segment may temporarily exceed segment_size limit
+                # This is acceptable for returned items (avoids complex splitting logic)
+                segment = items + segment
 
                 # Update metadata
                 current_count = self._get_queue_count(metadata, priority)
+                tail_segment = self._get_tail_segment(metadata, priority)
                 self._set_queue_count(metadata, priority, current_count + len(items))
+                self._set_segment_pointers(metadata, priority, head_segment, tail_segment)
 
-                # Save queue
-                await self._state_manager.set_state(queue_key, queue)
+                # Save segment
+                await self._state_manager.set_state(segment_key, segment)
 
                 logger.info(
-                    f"Returned {len(items)} expired lock items to queue_{priority} for actor {self.actor_id}"
+                    f"Returned {len(items)} expired lock items to priority {priority} segment {head_segment} for actor {self.actor_id}"
                 )
 
             # Save updated metadata
@@ -396,25 +475,38 @@ class PushPopActor(Actor, PushPopActorInterface):
                 if count == 0:
                     continue
 
-                # Load queue for this priority
-                queue_key = f"queue_{priority}"
-                has_queue, queue = await self._state_manager.try_get_state(queue_key)
+                # Get head and tail segment numbers
+                head_segment = self._get_head_segment(metadata, priority)
+                tail_segment = self._get_tail_segment(metadata, priority)
+                segment_key = self._get_segment_key(priority, head_segment)
 
-                if not has_queue or not queue:
+                # Load head segment
+                has_segment, segment = await self._state_manager.try_get_state(segment_key)
+
+                if not has_segment or not segment:
                     # Defensive: fix count desync
                     logger.warning(f"Count desync detected for priority {priority}, fixing...")
                     self._delete_queue_metadata(metadata, priority)
                     continue
 
                 # Pop single item from front
-                item = queue[0]
-                queue = queue[1:]
+                item = segment[0]
+                segment = segment[1:]
 
                 # Add to result WITH priority metadata
                 items_with_priority.append({"item": item, "priority": priority})
 
-                # Update state
-                await self._state_manager.set_state(queue_key, queue)
+                # Handle segment cleanup
+                if len(segment) == 0:
+                    if head_segment < tail_segment:
+                        # More segments exist, move to next
+                        # Clear the empty segment from state
+                        await self._state_manager.set_state(segment_key, [])
+                        head_segment += 1
+                    # If head_segment == tail_segment, we'll handle this after creating lock
+                else:
+                    # Save updated segment (only if not empty)
+                    await self._state_manager.set_state(segment_key, segment)
 
                 # Update metadata map
                 new_count = count - 1
@@ -422,9 +514,10 @@ class PushPopActor(Actor, PushPopActorInterface):
                     self._delete_queue_metadata(metadata, priority)
                 else:
                     self._set_queue_count(metadata, priority, new_count)
+                    self._set_segment_pointers(metadata, priority, head_segment, tail_segment)
 
                 logger.info(
-                    f"PopWithAck: popped 1 item from priority {priority} for actor {self.actor_id}"
+                    f"PopWithAck: popped 1 item from priority {priority} segment {head_segment} for actor {self.actor_id}"
                 )
                 break  # Only pop one item
 

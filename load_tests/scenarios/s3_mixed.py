@@ -70,7 +70,7 @@ class ProducerHeavyUser(BasePushPopUser):
     """
 
     abstract = False
-    wait_time = between(0.3, 0.7)  # Faster rate for higher throughput
+    wait_time = between(0.05, 0.15)  # Average 0.1s = ~10 RPS per user
 
     def on_start(self):
         """Initialize with minimal pre-population."""

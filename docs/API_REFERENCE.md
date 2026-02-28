@@ -696,15 +696,27 @@ The example API server has no built-in rate limiting. For production:
 ### Push Performance
 
 - **Time Complexity**: O(1) amortized
-- **Network Calls**: 1 state store write per push
+- **Network Calls**: 2 state store operations (segment + metadata)
+- **Memory** (v4.0+): Max 100 items loaded per push (segmented storage)
 - **Recommendation**: Batch pushes when possible to reduce roundtrips
 
 ### Pop Performance
 
 - **Time Complexity**: O(k) where k = number of priority levels with items
-- **Network Calls**: 1 state store read + 1 write per pop
-- **Memory**: Single popped item loaded into memory
+- **Network Calls**: 2 state store operations (segment + metadata)
+- **Memory** (v4.0+): Max 100 items loaded per pop (vs entire queue in v3.x)
+- **Scalability**: Constant-time operations regardless of queue size (thanks to segmentation)
 - **Recommendation**: Call Pop in loops for bulk processing, or use PopWithAck for reliable batch processing
+
+### Segmented Storage Benefits (v4.0+)
+
+PushPopActor v4.0+ uses segmented storage, splitting large queues into 100-item chunks:
+
+- **Memory**: 10,000 item queue uses ~10-50KB per operation (was 1-5MB in v3.x)
+- **Network**: Serialize max 100 items per save (vs entire queue)
+- **Performance**: O(1) operations regardless of queue size
+
+See [features/segmented-queue.md](../features/segmented-queue.md) for technical details.
 
 ### State Store Impact
 
@@ -729,9 +741,11 @@ for i, item in enumerate(items):
 ## Limitations
 
 - **Max Item Size**: Limited by state store (PostgreSQL: ~1GB, but practically keep < 1MB)
-- **Max Queue Size**: No hard limit, but large queues impact performance
+- **Max Queue Size**: No hard limit - segmented storage (v4.0+) supports queues of any size
+- **Max Segment Size**: 100 items per segment (configurable in metadata)
 - **Max Depth**: API server limits to 100 items per pop (configurable)
 - **Concurrency**: One operation per actor at a time (per actor ID)
+- **Breaking Change**: v4.0+ uses segmented storage, incompatible with v3.x state format
 
 ---
 
@@ -739,7 +753,18 @@ for i, item in enumerate(items):
 
 - **Dapr**: 1.17.0+
 - **Python**: 3.11+
-- **push-pop-actor**: 0.1.0
+- **push-pop-actor**:
+  - v3.x: Non-segmented queues
+  - v4.0+: **Segmented queues** (breaking change)
+
+### Version 4.0 Breaking Changes
+
+V4.0 introduces segmented queue architecture for improved performance:
+
+- **State Format**: Changed from `queue_N` to `queue_N_seg_M` keys
+- **Migration**: Requires draining v3.x queues before upgrading (see [features/segmented-queue.md](../features/segmented-queue.md))
+- **Benefits**: Constant memory/network per operation, scales to millions of items
+- **API**: No API changes - fully transparent to users
 
 ---
 

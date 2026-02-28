@@ -5,7 +5,7 @@ These tests mock the Dapr state manager to avoid requiring a running Dapr runtim
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from push_pop_actor import PushPopActor
 
@@ -29,6 +29,20 @@ class MockStateManager:
     async def save_state(self):
         """Mock save_state method."""
         pass
+
+
+async def get_all_items_for_priority(state_manager, priority: int):
+    """Helper to get all items across all segments for a priority."""
+    items = []
+    segment = 0
+    while True:
+        key = f"queue_{priority}_seg_{segment}"
+        has_segment, segment_data = await state_manager.try_get_state(key)
+        if not has_segment:
+            break
+        items.extend(segment_data)
+        segment += 1
+    return items
 
 
 @pytest.fixture
@@ -55,7 +69,7 @@ async def test_actor_activation(mock_actor):
     # Check that metadata was initialized
     has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
     assert has_metadata is True
-    assert metadata == {"queues": {}}
+    assert metadata == {"config": {"segment_size": 100}, "queues": {}}
 
 
 @pytest.mark.asyncio
@@ -68,9 +82,8 @@ async def test_push_single_item(mock_actor):
 
     assert result is True
 
-    # Verify item was added to queue_0
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
-    assert has_queue is True
+    # Verify item was added to queue_0_seg_0
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
     assert len(queue) == 1
     assert queue[0] == item
 
@@ -95,8 +108,7 @@ async def test_push_multiple_items(mock_actor):
         assert result is True
 
     # Verify all items were added to queue_0
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
-    assert has_queue is True
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
     assert len(queue) == 3
     assert queue == items
 
@@ -119,12 +131,12 @@ async def test_push_invalid_item(mock_actor):
     assert result is False
 
     # Verify no queues were created
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
-    assert has_queue is False
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
+    assert len(queue) == 0
 
     # Verify counts map is still empty
     has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
-    assert metadata == {"queues": {}}
+    assert metadata["queues"] == {}
 
 
 @pytest.mark.asyncio
@@ -156,7 +168,7 @@ async def test_pop_single_item(mock_actor):
     assert result[0] == items[0]
 
     # Verify remaining items in queue_0
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
     assert len(queue) == 2
     assert queue == items[1:]
 
@@ -191,7 +203,7 @@ async def test_pop_multiple_items(mock_actor):
     assert popped == items[:3]
 
     # Verify remaining items in queue_0
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
     assert len(queue) == 2
     assert queue == items[3:]
 
@@ -226,7 +238,7 @@ async def test_pop_more_than_available(mock_actor):
 
     # Verify counts map is empty
     has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
-    assert metadata == {"queues": {}}
+    assert metadata["queues"] == {}
 
 
 @pytest.mark.asyncio
@@ -270,7 +282,7 @@ async def test_push_after_pop(mock_actor):
     assert result is True
 
     # Verify queue_0 state
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
     assert len(queue) == 2
     assert queue[0]["id"] == 2  # Second item from original push
     assert queue[1]["id"] == 3  # New item
@@ -320,8 +332,7 @@ async def test_push_with_priority_0(mock_actor):
     assert result is True
 
     # Verify item in queue_0
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
-    assert has_queue is True
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
     assert len(queue) == 1
     assert queue[0] == item
 
@@ -341,8 +352,7 @@ async def test_push_with_priority_5(mock_actor):
     assert result is True
 
     # Verify item in queue_5
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_5")
-    assert has_queue is True
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 5)
     assert len(queue) == 1
 
     # Verify counts map
@@ -361,8 +371,7 @@ async def test_push_default_priority(mock_actor):
     assert result is True
 
     # Verify item in queue_0
-    has_queue, queue = await mock_actor._state_manager.try_get_state("queue_0")
-    assert has_queue is True
+    queue = await get_all_items_for_priority(mock_actor._state_manager, 0)
 
     # Verify counts map
     has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
@@ -381,7 +390,7 @@ async def test_push_invalid_priority_negative(mock_actor):
 
     # Verify no queues created
     has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
-    assert metadata == {"queues": {}}
+    assert metadata["queues"] == {}
 
 
 @pytest.mark.asyncio
@@ -396,7 +405,7 @@ async def test_push_invalid_priority_non_int(mock_actor):
 
     # Verify no queues created
     has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
-    assert metadata == {"queues": {}}
+    assert metadata["queues"] == {}
 
 
 @pytest.mark.asyncio
@@ -434,15 +443,15 @@ async def test_multiple_priorities_push(mock_actor):
         await mock_actor.Push({"item": item, "priority": 2})
 
     # Verify queue_0
-    has_q0, q0 = await mock_actor._state_manager.try_get_state("queue_0")
+    q0 = await get_all_items_for_priority(mock_actor._state_manager, 0)
     assert len(q0) == 2
 
     # Verify queue_1
-    has_q1, q1 = await mock_actor._state_manager.try_get_state("queue_1")
+    q1 = await get_all_items_for_priority(mock_actor._state_manager, 1)
     assert len(q1) == 1
 
     # Verify queue_2
-    has_q2, q2 = await mock_actor._state_manager.try_get_state("queue_2")
+    q2 = await get_all_items_for_priority(mock_actor._state_manager, 2)
     assert len(q2) == 1
 
 
@@ -489,12 +498,12 @@ async def test_pop_drains_priority_completely(mock_actor):
     assert popped[3]["p"] == 1
 
     # Verify priority 0 is empty
-    has_q0, q0 = await mock_actor._state_manager.try_get_state("queue_0")
-    # Queue 0 should not exist or be empty
-    assert not has_q0 or len(q0) == 0
+    q0 = await get_all_items_for_priority(mock_actor._state_manager, 0)
+    # Queue 0 should be empty
+    assert len(q0) == 0
 
     # Verify priority 1 still has 1 item
-    has_q1, q1 = await mock_actor._state_manager.try_get_state("queue_1")
+    q1 = await get_all_items_for_priority(mock_actor._state_manager, 1)
     assert len(q1) == 1
 
     # Verify counts map
@@ -1017,8 +1026,8 @@ async def test_expired_lock_items_return_to_original_priority_single(mock_actor)
     assert next_pop["items"][0]["data"] == "p2"
 
     # Verify item is in priority 2 queue, not queue_0
-    has_queue_2, queue_2 = await mock_actor._state_manager.try_get_state("queue_2")
-    has_queue_0, queue_0 = await mock_actor._state_manager.try_get_state("queue_0")
+    queue_2 = await get_all_items_for_priority(mock_actor._state_manager, 2)
+    queue_0 = await get_all_items_for_priority(mock_actor._state_manager, 0)
 
     # After the second pop, the item was taken from queue_2
     # So verify the counts are correct
@@ -1054,9 +1063,9 @@ async def test_expired_lock_items_return_to_original_priorities_multiple(mock_ac
         await mock_actor.PopWithAck({})
 
     # Verify items returned to original priorities
-    has_q0, queue_0 = await mock_actor._state_manager.try_get_state("queue_0")
-    has_q1, queue_1 = await mock_actor._state_manager.try_get_state("queue_1")
-    has_q2, queue_2 = await mock_actor._state_manager.try_get_state("queue_2")
+    queue_0 = await get_all_items_for_priority(mock_actor._state_manager, 0)
+    queue_1 = await get_all_items_for_priority(mock_actor._state_manager, 1)
+    queue_2 = await get_all_items_for_priority(mock_actor._state_manager, 2)
 
     # After expiration return, the expired item should be back
     # Then the new PopWithAck popped one item from queue_0
@@ -1078,3 +1087,207 @@ async def test_expired_lock_items_return_to_original_priorities_multiple(mock_ac
     assert metadata["queues"]["queue_0"]["metadata"]["count"] == 1  # One item (one re-popped)
     assert metadata["queues"]["queue_1"]["metadata"]["count"] == 1
     assert metadata["queues"]["queue_2"]["metadata"]["count"] == 1
+
+
+# ===== Segmented Queue Tests =====
+
+
+@pytest.mark.asyncio
+async def test_push_creates_new_segment_when_full(mock_actor):
+    """Test that pushing 101 items creates 2 segments."""
+    await mock_actor._on_activate()
+
+    # Push 100 items (fills first segment)
+    for i in range(100):
+        await mock_actor.Push({"item": {"id": i}, "priority": 0})
+
+    # Verify single segment exists
+    has_seg0, seg0 = await mock_actor._state_manager.try_get_state("queue_0_seg_0")
+    assert has_seg0 is True
+    assert len(seg0) == 100
+
+    # Verify metadata shows tail_segment=0
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["tail_segment"] == 0
+    assert metadata["queues"]["queue_0"]["metadata"]["head_segment"] == 0
+
+    # Push 101st item (creates new segment)
+    await mock_actor.Push({"item": {"id": 100}, "priority": 0})
+
+    # Verify two segments exist
+    has_seg0, seg0 = await mock_actor._state_manager.try_get_state("queue_0_seg_0")
+    has_seg1, seg1 = await mock_actor._state_manager.try_get_state("queue_0_seg_1")
+    assert has_seg0 is True
+    assert has_seg1 is True
+    assert len(seg0) == 100
+    assert len(seg1) == 1
+
+    # Verify metadata shows tail_segment=1
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["tail_segment"] == 1
+    assert metadata["queues"]["queue_0"]["metadata"]["head_segment"] == 0
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 101
+
+
+@pytest.mark.asyncio
+async def test_pop_transitions_between_segments(mock_actor):
+    """Test that pop transitions from segment 0 to segment 1 when segment 0 is drained."""
+    await mock_actor._on_activate()
+
+    # Create 2 segments with items
+    for i in range(150):
+        await mock_actor.Push({"item": {"id": i}, "priority": 0})
+
+    # Verify 2 segments exist
+    has_seg0, seg0 = await mock_actor._state_manager.try_get_state("queue_0_seg_0")
+    has_seg1, seg1 = await mock_actor._state_manager.try_get_state("queue_0_seg_1")
+    assert has_seg0 and has_seg1
+    assert len(seg0) == 100
+    assert len(seg1) == 50
+
+    # Pop all items from segment 0 (100 items)
+    popped_items = []
+    for _ in range(100):
+        result = await mock_actor.Pop()
+        popped_items.extend(result)
+
+    # Verify segment 0 no longer exists or is empty, head_segment incremented
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["head_segment"] == 1
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 50
+
+    # Pop one more item (from segment 1)
+    result = await mock_actor.Pop()
+    assert len(result) == 1
+    assert result[0]["id"] == 100  # First item from second segment
+
+    # Verify count decreased
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert metadata["queues"]["queue_0"]["metadata"]["count"] == 49
+
+
+@pytest.mark.asyncio
+async def test_empty_segments_deleted(mock_actor):
+    """Test that empty segments don't persist in state."""
+    await mock_actor._on_activate()
+
+    # Fill and drain a segment
+    for i in range(100):
+        await mock_actor.Push({"item": {"id": i}, "priority": 0})
+
+    # Pop all 100 items
+    for _ in range(100):
+        await mock_actor.Pop()
+
+    # Verify queue is now empty
+    has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "queue_0" not in metadata["queues"]
+
+
+@pytest.mark.asyncio
+async def test_large_queue_multiple_segments(mock_actor):
+    """Test that large queue with 350 items creates 4 segments and maintains FIFO order."""
+    await mock_actor._on_activate()
+
+    # Push 350 items (4 segments: 100, 100, 100, 50)
+    for i in range(350):
+        await mock_actor.Push({"item": {"id": i}, "priority": 0})
+
+    # Verify 4 segments exist
+    has_seg0, seg0 = await mock_actor._state_manager.try_get_state("queue_0_seg_0")
+    has_seg1, seg1 = await mock_actor._state_manager.try_get_state("queue_0_seg_1")
+    has_seg2, seg2 = await mock_actor._state_manager.try_get_state("queue_0_seg_2")
+    has_seg3, seg3 = await mock_actor._state_manager.try_get_state("queue_0_seg_3")
+
+    assert has_seg0 and len(seg0) == 100
+    assert has_seg1 and len(seg1) == 100
+    assert has_seg2 and len(seg2) == 100
+    assert has_seg3 and len(seg3) == 50
+
+    # Pop all items and verify FIFO order
+    popped_items = []
+    for _ in range(350):
+        result = await mock_actor.Pop()
+        if result:
+            popped_items.extend(result)
+
+    # Verify FIFO order maintained
+    assert len(popped_items) == 350
+    for i, item in enumerate(popped_items):
+        assert item["id"] == i
+
+
+@pytest.mark.asyncio
+async def test_popwithack_returns_items_to_head_segment(mock_actor):
+    """Test that expired lock returns items to head segment."""
+    await mock_actor._on_activate()
+
+    # Push 150 items (2 segments)
+    for i in range(150):
+        await mock_actor.Push({"item": {"id": i}, "priority": 0})
+
+    # PopWithAck with short TTL
+    with patch("time.time", return_value=1000.0):
+        result = await mock_actor.PopWithAck({"ttl_seconds": 5})
+        assert result["count"] == 1
+        assert result["items"][0]["id"] == 0
+        assert "lock_id" in result
+
+    # Fast forward past expiration
+    with patch("time.time", return_value=1006.0):
+        # Trigger expiration cleanup
+        await mock_actor.PopWithAck({})
+
+    # Verify item was returned to head segment then re-popped
+    has_seg0, seg0 = await mock_actor._state_manager.try_get_state("queue_0_seg_0")
+    assert has_seg0
+    # The first item (id=0) was returned, then immediately popped again by the second PopWithAck
+    # So the segment should start with id=1
+    assert seg0[0]["id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_multiple_priorities_with_segments(mock_actor):
+    """Test that multiple priorities have independent segment numbering."""
+    await mock_actor._on_activate()
+
+    # Push 150 items to priority 0, 150 to priority 1
+    for i in range(150):
+        await mock_actor.Push({"item": {"id": i, "p": 0}, "priority": 0})
+        await mock_actor.Push({"item": {"id": i, "p": 1}, "priority": 1})
+
+    # Verify independent segment numbering
+    has_p0_seg0, p0_seg0 = await mock_actor._state_manager.try_get_state("queue_0_seg_0")
+    has_p0_seg1, p0_seg1 = await mock_actor._state_manager.try_get_state("queue_0_seg_1")
+    has_p1_seg0, p1_seg0 = await mock_actor._state_manager.try_get_state("queue_1_seg_0")
+    has_p1_seg1, p1_seg1 = await mock_actor._state_manager.try_get_state("queue_1_seg_1")
+
+    assert has_p0_seg0 and len(p0_seg0) == 100
+    assert has_p0_seg1 and len(p0_seg1) == 50
+    assert has_p1_seg0 and len(p1_seg0) == 100
+    assert has_p1_seg1 and len(p1_seg1) == 50
+
+    # Pop all items from priority 0 first
+    popped_p0 = []
+    for _ in range(150):
+        result = await mock_actor.Pop()
+        if result:
+            popped_p0.extend(result)
+
+    # Verify all priority 0 items popped
+    assert len(popped_p0) == 150
+    assert all(item["p"] == 0 for item in popped_p0)
+
+    # Pop items from priority 1
+    result = await mock_actor.Pop()
+    assert result[0]["p"] == 1
+
+
+@pytest.mark.asyncio
+async def test_segment_size_configuration(mock_actor):
+    """Test that segment_size is properly initialized."""
+    await mock_actor._on_activate()
+
+    _, metadata = await mock_actor._state_manager.try_get_state("metadata")
+    assert "config" in metadata
+    assert metadata["config"]["segment_size"] == 100
