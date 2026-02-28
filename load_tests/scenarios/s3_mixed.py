@@ -139,11 +139,11 @@ class MultiPriorityMixedUser(BasePushPopUser):
     Tests performance when using the priority queue features.
     Items are pushed with random priorities 0-4, and popped in order.
 
-    Target: 50 RPS total (balanced push/pop)
+    Target: ~200 RPS total (balanced push/pop with high frequency)
     """
 
     abstract = False
-    wait_time = between(0.5, 1.5)
+    wait_time = between(0.05, 0.15)  # Average 0.1s = ~10 RPS per user
 
     def on_start(self):
         """Initialize with mixed priority items."""
