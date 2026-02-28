@@ -7,12 +7,14 @@ This actor implements an N-queue priority system where:
 - Each priority level maintains FIFO ordering independently
 """
 
+import json
 import logging
 import secrets
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from dapr.actor import Actor, ActorInterface, actormethod
+from dapr.clients import DaprClient
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +161,41 @@ class PushPopActor(Actor, PushPopActorInterface):
         metadata["queues"][queue_key]["metadata"]["head_segment"] = head
         metadata["queues"][queue_key]["metadata"]["tail_segment"] = tail
 
+    def _get_offloaded_segment_key(self, priority: int, segment_num: int) -> str:
+        """Generate state store key for offloaded segment with actor ID"""
+        return f"offloaded_queue_{priority}_seg_{segment_num}_{self.id.id}"
+
+    def _get_buffer_segments(self, metadata: dict) -> int:
+        """Get configured buffer_segments (default 1)"""
+        return metadata.get("config", {}).get("buffer_segments", 1)
+
+    def _get_offloaded_segments(self, metadata: dict, priority: int) -> List[int]:
+        """Get list of offloaded segment numbers for priority (default empty list)"""
+        queue_key = f"queue_{priority}"
+        return metadata.get("queues", {}).get(queue_key, {}).get("metadata", {}).get("offloaded_segments", [])
+
+    def _add_offloaded_segment(self, metadata: dict, priority: int, segment_num: int) -> None:
+        """Add segment number to offloaded_segments list"""
+        queue_key = f"queue_{priority}"
+        if "queues" not in metadata:
+            metadata["queues"] = {}
+        if queue_key not in metadata["queues"]:
+            metadata["queues"][queue_key] = {"metadata": {}}
+        if "metadata" not in metadata["queues"][queue_key]:
+            metadata["queues"][queue_key]["metadata"] = {}
+        if "offloaded_segments" not in metadata["queues"][queue_key]["metadata"]:
+            metadata["queues"][queue_key]["metadata"]["offloaded_segments"] = []
+        if segment_num not in metadata["queues"][queue_key]["metadata"]["offloaded_segments"]:
+            metadata["queues"][queue_key]["metadata"]["offloaded_segments"].append(segment_num)
+
+    def _remove_offloaded_segment(self, metadata: dict, priority: int, segment_num: int) -> None:
+        """Remove segment number from offloaded_segments list"""
+        queue_key = f"queue_{priority}"
+        if "queues" in metadata and queue_key in metadata["queues"]:
+            offloaded = metadata["queues"][queue_key].get("metadata", {}).get("offloaded_segments", [])
+            if segment_num in offloaded:
+                offloaded.remove(segment_num)
+
     async def _on_activate(self) -> None:
         """
         Called when the actor is activated.
@@ -170,11 +207,183 @@ class PushPopActor(Actor, PushPopActorInterface):
         has_metadata, _ = await self._state_manager.try_get_state("metadata")
         if not has_metadata:
             await self._state_manager.set_state("metadata", {
-                "config": {"segment_size": 100},
+                "config": {
+                    "segment_size": 100,
+                    "buffer_segments": 1
+                },
                 "queues": {}
             })
             await self._state_manager.save_state()
             logger.info(f"Initialized empty metadata map with segment config for actor {self.actor_id}")
+
+    async def _offload_segment(self, priority: int, segment_num: int, segment_data: List[dict], metadata: dict) -> bool:
+        """
+        Offload a full segment to the state store.
+
+        Args:
+            priority: Priority level
+            segment_num: Segment number to offload
+            segment_data: The segment data to save
+            metadata: Current metadata dictionary
+
+        Returns:
+            bool: True if offload successful, False otherwise
+        """
+        try:
+            key = self._get_offloaded_segment_key(priority, segment_num)
+
+            # Save to state store using DaprClient (synchronous context manager)
+            # DaprClient requires value as str or bytes, so serialize to JSON
+            with DaprClient() as client:
+                client.save_state(
+                    store_name='statestore',
+                    key=key,
+                    value=json.dumps(segment_data)
+                )
+
+            # Add to offloaded_segments list
+            self._add_offloaded_segment(metadata, priority, segment_num)
+
+            # Delete from actor state manager
+            segment_key = self._get_segment_key(priority, segment_num)
+            await self._state_manager.remove_state(segment_key)
+
+            # Save metadata
+            await self._state_manager.set_state("metadata", metadata)
+            await self._state_manager.save_state()
+
+            logger.info(f"Offloaded segment {segment_num} for priority {priority} to state store (actor {self.actor_id})")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to offload segment {segment_num} for priority {priority} (actor {self.actor_id}): {e}")
+            return False
+
+    async def _load_offloaded_segment(self, priority: int, segment_num: int, metadata: dict) -> Optional[List[dict]]:
+        """
+        Load an offloaded segment from state store back into actor state.
+
+        Args:
+            priority: Priority level
+            segment_num: Segment number to load
+            metadata: Current metadata dictionary
+
+        Returns:
+            List[dict]: Segment data if successful, None otherwise
+        """
+        try:
+            key = self._get_offloaded_segment_key(priority, segment_num)
+
+            # Load from state store (synchronous context manager)
+            # StateResponse.json() returns the deserialized JSON data
+            with DaprClient() as client:
+                result = client.get_state(
+                    store_name='statestore',
+                    key=key
+                )
+
+            # Check if data exists
+            if not result or not result.data:
+                logger.warning(f"No data found for offloaded segment {segment_num} priority {priority} (actor {self.actor_id})")
+                return None
+
+            # Deserialize from JSON using StateResponse.json()
+            segment_data = result.json()
+
+            if not segment_data:
+                logger.warning(f"No data found for offloaded segment {segment_num} priority {priority} (actor {self.actor_id})")
+                return None
+
+            # Save to actor state manager
+            segment_key = self._get_segment_key(priority, segment_num)
+            await self._state_manager.set_state(segment_key, segment_data)
+
+            # Remove from offloaded_segments list
+            self._remove_offloaded_segment(metadata, priority, segment_num)
+
+            # Delete from state store (synchronous context manager)
+            with DaprClient() as client:
+                client.delete_state(
+                    store_name='statestore',
+                    key=key
+                )
+
+            # Save metadata
+            await self._state_manager.set_state("metadata", metadata)
+            await self._state_manager.save_state()
+
+            logger.info(f"Loaded segment {segment_num} for priority {priority} from state store (actor {self.actor_id})")
+            return segment_data
+
+        except Exception as e:
+            logger.error(f"Failed to load offloaded segment {segment_num} for priority {priority} (actor {self.actor_id}): {e}")
+            return None
+
+    async def _check_and_offload_segments(self, priority: int, metadata: dict) -> None:
+        """
+        Check and offload eligible segments for a priority queue.
+
+        A segment is eligible if:
+        - It is full (segment_size items)
+        - segment_num > head_segment + buffer_segments
+        - segment_num < tail_segment
+        """
+        try:
+            queue_key = f"queue_{priority}"
+            if queue_key not in metadata.get("queues", {}):
+                return
+
+            head_segment = self._get_head_segment(metadata, priority)
+            tail_segment = self._get_tail_segment(metadata, priority)
+            buffer_segments = self._get_buffer_segments(metadata)
+            offloaded_segments = self._get_offloaded_segments(metadata, priority)
+            segment_size = self._get_segment_size(metadata)
+
+            # Calculate eligible segment range
+            min_offload = head_segment + buffer_segments + 1
+            max_offload = tail_segment
+
+            # Check each segment in range
+            for segment_num in range(min_offload, max_offload):
+                # Skip if already offloaded
+                if segment_num in offloaded_segments:
+                    continue
+
+                # Check if segment exists and is full
+                segment_key = self._get_segment_key(priority, segment_num)
+                has_segment, segment_data = await self._state_manager.try_get_state(segment_key)
+
+                if has_segment and len(segment_data) == segment_size:
+                    # Offload this segment (non-blocking on failure)
+                    await self._offload_segment(priority, segment_num, segment_data, metadata)
+
+        except Exception as e:
+            logger.warning(f"Error checking/offloading segments for priority {priority} (actor {self.actor_id}): {e}")
+
+    async def _check_and_load_segments(self, priority: int, metadata: dict) -> None:
+        """
+        Check and load offloaded segments that are needed for consumption.
+
+        Load segments where: segment_num <= head_segment + buffer_segments
+        """
+        try:
+            offloaded_segments = self._get_offloaded_segments(metadata, priority)
+            if not offloaded_segments:
+                return
+
+            head_segment = self._get_head_segment(metadata, priority)
+            buffer_segments = self._get_buffer_segments(metadata)
+
+            # Calculate which segments should be loaded
+            max_offloaded = head_segment + buffer_segments
+
+            # Load segments that are within the buffer zone
+            for segment_num in offloaded_segments[:]:  # Use slice copy to avoid modification during iteration
+                if segment_num <= max_offloaded:
+                    await self._load_offloaded_segment(priority, segment_num, metadata)
+
+        except Exception as e:
+            logger.warning(f"Error checking/loading segments for priority {priority} (actor {self.actor_id}): {e}")
 
     async def Push(self, data: Dict[str, Any]) -> bool:
         """
@@ -206,7 +415,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             # Load metadata map
             has_metadata, metadata = await self._state_manager.try_get_state("metadata")
             if not has_metadata:
-                metadata = {"config": {"segment_size": 100}, "queues": {}}
+                metadata = {"config": {"segment_size": 100, "buffer_segments": 1}, "queues": {}}
 
             # Get tail segment number for this priority
             tail_segment = self._get_tail_segment(metadata, priority)
@@ -242,6 +451,13 @@ class PushPopActor(Actor, PushPopActorInterface):
             logger.info(
                 f"Pushed item to priority {priority} segment {tail_segment} for actor {self.actor_id}. Segment size: {len(segment)}, Total count: {current_count + 1}"
             )
+
+            # Check and offload eligible segments (non-blocking on failure)
+            try:
+                await self._check_and_offload_segments(priority, metadata)
+            except Exception as e:
+                logger.warning(f"Offload check failed after push (non-blocking): {e}")
+
             return True
 
         except Exception as e:
@@ -272,6 +488,9 @@ class PushPopActor(Actor, PushPopActorInterface):
                 count = self._get_queue_count(metadata, priority)
                 if count == 0:
                     continue
+
+                # Check and load offloaded segments if needed
+                await self._check_and_load_segments(priority, metadata)
 
                 # Get head and tail segment numbers
                 head_segment = self._get_head_segment(metadata, priority)
@@ -367,10 +586,13 @@ class PushPopActor(Actor, PushPopActorInterface):
             # Load current metadata
             has_metadata, metadata = await self._state_manager.try_get_state("metadata")
             if not has_metadata:
-                metadata = {"config": {"segment_size": 100}, "queues": {}}
+                metadata = {"config": {"segment_size": 100, "buffer_segments": 1}, "queues": {}}
 
             # Return items to each priority queue (prepend to head segment)
             for priority, items in items_by_priority.items():
+                # Check and load offloaded segments if needed
+                await self._check_and_load_segments(priority, metadata)
+
                 # Get head segment for this priority
                 head_segment = self._get_head_segment(metadata, priority)
                 segment_key = self._get_segment_key(priority, head_segment)
@@ -474,6 +696,9 @@ class PushPopActor(Actor, PushPopActorInterface):
                 count = self._get_queue_count(metadata, priority)
                 if count == 0:
                     continue
+
+                # Check and load offloaded segments if needed
+                await self._check_and_load_segments(priority, metadata)
 
                 # Get head and tail segment numbers
                 head_segment = self._get_head_segment(metadata, priority)

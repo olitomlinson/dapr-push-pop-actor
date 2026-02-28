@@ -131,6 +131,275 @@ queue_0_seg_9: [items 900-999]   // Last 100 items
 }
 ```
 
+## Segment Offloading (Memory Optimization)
+
+### Overview
+
+**Introduced in**: v4.1.0
+
+Segment Offloading is an additional memory optimization that moves "middle" full segments from the actor's state manager to the external Dapr state store. This reduces active memory footprint while maintaining FIFO guarantees and transparent API behavior.
+
+**Key Benefits**:
+- **Memory Reduction**: O(N items) → O(buffer_segments × 100 items)
+- **Scalability**: Support much larger queues per actor without memory constraints
+- **Transparent**: No API changes - offloading happens automatically
+- **Configurable**: Tune memory vs latency with `buffer_segments` parameter
+
+### How It Works
+
+Only **middle segments** are offloaded - segments that are:
+1. Full (100 items)
+2. Not being consumed (segment_num > head_segment + buffer_segments)
+3. Not being written to (segment_num < tail_segment)
+
+**Example**: With `buffer_segments=1`, head=0, tail=5:
+- Segment 0: Head (active) - KEEP in actor state
+- Segment 1: Buffer - KEEP in actor state
+- Segments 2, 3, 4: Middle full segments - OFFLOAD to state store
+- Segment 5: Tail (active) - KEEP in actor state
+
+**Result**: Only 3 segments (~300 items) in memory instead of 6 segments (~600 items) - 50% memory reduction.
+
+### Configuration
+
+Add `buffer_segments` to metadata config:
+
+```json
+{
+  "config": {
+    "segment_size": 100,
+    "buffer_segments": 1
+  },
+  "queues": {
+    "queue_0": {
+      "metadata": {
+        "count": 500,
+        "head_segment": 0,
+        "tail_segment": 4,
+        "offloaded_segments": [2, 3]
+      }
+    }
+  }
+}
+```
+
+**Configuration Parameters**:
+- `buffer_segments`: Number of full segments to keep between head and offloaded segments (default: 1)
+  - Higher values = more memory, less latency
+  - Lower values = less memory, more latency
+  - Minimum: 1 (always keep at least 1 buffer segment)
+
+### State Store Keys
+
+Offloaded segments use a predictable key naming convention including actor ID:
+
+```
+offloaded_queue_{priority}_seg_{segment_num}_{actor_id}
+```
+
+**Example**:
+- Actor ID: `user-queue-123`
+- Priority: 0
+- Segment: 2
+- Key: `offloaded_queue_0_seg_2_user-queue-123`
+
+### Offloading Lifecycle
+
+#### When Segments Are Offloaded
+
+**Trigger**: After successful Push operation
+**Conditions**:
+1. Segment is full (100 items)
+2. `segment_num > head_segment + buffer_segments`
+3. `segment_num < tail_segment`
+
+**Process**:
+1. Save segment data to state store with offloaded key
+2. Add segment number to `offloaded_segments` list in metadata
+3. Delete segment from actor state manager
+4. Continue (non-blocking on failure)
+
+#### When Segments Are Loaded Back
+
+**Trigger**: Before Pop/PopWithAck operations
+**Condition**: `segment_num <= head_segment + buffer_segments`
+
+**Process**:
+1. Load segment data from state store
+2. Save to actor state manager
+3. Remove from `offloaded_segments` list
+4. Delete from state store (cleanup)
+
+#### Example Flow
+
+**Setup**: Queue with 500 items (5 segments), buffer_segments=1
+
+**Initial State**:
+```
+In Actor State:     segments 0, 1, 2, 3, 4
+In State Store:     (none)
+Memory Usage:       ~500 items
+```
+
+**After Offloading** (head=0, tail=4):
+```
+In Actor State:     segments 0, 1, 4
+In State Store:     segments 2, 3
+Memory Usage:       ~300 items (40% reduction)
+Metadata:           offloaded_segments: [2, 3]
+```
+
+**After Pop 100 Items** (head=1, tail=4):
+```
+Segment 2 auto-loaded (within buffer distance)
+In Actor State:     segments 1, 2, 4
+In State Store:     segment 3
+Memory Usage:       ~300 items
+Metadata:           offloaded_segments: [3]
+```
+
+### Performance Characteristics
+
+#### Memory Savings
+
+**Without Offloading**:
+- Memory Usage: O(N items) where N = total items
+- Example (10,000 items): ~10,000 items in memory
+
+**With Offloading** (buffer_segments=1):
+- Memory Usage: O(buffer_segments × 100 + active segments)
+- Example (10,000 items): ~300 items in memory (97% reduction)
+
+**Formula**:
+```
+Memory = (head_segment + buffer_segments + 1) × segment_size + tail_segment_items
+       ≈ (buffer_segments + 2) × 100 items
+```
+
+#### Latency Trade-offs
+
+**Offload Operation** (during Push):
+- Additional time: ~10-50ms per segment
+- Frequency: Once per 100 pushes (when segment becomes full)
+- Non-blocking: Push always succeeds even if offload fails
+
+**Load Operation** (during Pop):
+- Additional time: ~10-50ms per segment
+- Frequency: Once per 100 pops (when entering buffer zone)
+- Impact: First pop of new segment slightly slower
+
+**Tuning**:
+- `buffer_segments=1`: Maximum memory savings, occasional load latency
+- `buffer_segments=3`: Moderate memory savings, rare load latency (segments pre-loaded)
+- `buffer_segments=5`: Minimal memory savings, almost no load latency
+
+### Error Handling
+
+**Philosophy**: Offloading is an optimization, not a requirement. Failures degrade gracefully.
+
+**Offload Failure**:
+- Log warning
+- Keep segment in actor state (no memory savings this cycle)
+- Continue push operation successfully
+- State store unavailable → full memory mode
+
+**Load Failure**:
+- Log error
+- Attempt to continue with existing state
+- May affect pop operation if segment truly needed
+
+**Never Blocks**: Push/Pop operations always complete, regardless of offload/load success.
+
+### Monitoring
+
+**Key Metrics to Track**:
+1. Number of offloaded segments per actor
+2. Offload success/failure rate
+3. Load latency per segment
+4. Memory usage before/after offloading
+5. State store operation latency
+
+**Logging**:
+```
+INFO: Offloaded segment 2 for priority 0 to state store (actor user-queue-123)
+INFO: Loaded segment 2 for priority 0 from state store (actor user-queue-123)
+WARNING: Failed to offload segment 3 for priority 0 (actor user-queue-123): connection timeout
+```
+
+### Implementation Details
+
+**Helper Methods**:
+```python
+_get_offloaded_segment_key(priority, segment_num)           # Generate state store key
+_get_buffer_segments(metadata)                              # Get configured buffer size
+_get_offloaded_segments(metadata, priority)                 # Get offloaded list
+_offload_segment(priority, segment_num, segment_data)       # Move to state store
+_load_offloaded_segment(priority, segment_num)              # Load from state store
+_check_and_offload_segments(priority, metadata)             # Check eligibility, offload
+_check_and_load_segments(priority, metadata)                # Check buffer, load
+```
+
+**Integration Points**:
+- `Push()`: Calls `_check_and_offload_segments()` after save
+- `Pop()`: Calls `_check_and_load_segments()` before access
+- `PopWithAck()`: Calls `_check_and_load_segments()` before access
+- `_return_items_to_queue()`: Calls `_check_and_load_segments()` before prepend
+
+### Use Cases
+
+**When to Enable** (default: always enabled):
+- Large queues (>500 items)
+- Memory-constrained environments
+- Cost optimization (reduce actor memory footprint)
+- Infrequent access patterns (batch processing)
+
+**When to Increase buffer_segments**:
+- High pop throughput requirements
+- Latency-sensitive applications
+- State store has high latency
+- Willing to trade memory for performance
+
+**When to Decrease buffer_segments** (not recommended below 1):
+- Extremely memory-constrained
+- Willing to accept higher latency
+- State store has low latency
+- Batch processing (latency not critical)
+
+### Example: Memory Comparison
+
+**Scenario**: Actor with 5,000 items across priority 0
+
+**Without Segmentation** (v3.x):
+```
+Memory: 5,000 items (~500KB - 5MB)
+State keys: queue_0
+```
+
+**With Segmentation** (v4.0):
+```
+Memory: 5,000 items (~500KB - 5MB)
+State keys: queue_0_seg_0 ... queue_0_seg_49
+```
+
+**With Segmentation + Offloading** (v4.1, buffer_segments=1):
+```
+Memory: ~300 items (~30KB - 300KB)  [94% reduction]
+State keys in actor: queue_0_seg_0, queue_0_seg_1, queue_0_seg_49
+State keys in store: offloaded_queue_0_seg_2_actor_id ... offloaded_queue_0_seg_48_actor_id
+```
+
+### Migration from v4.0 to v4.1
+
+**No Breaking Changes**: Offloading is backward compatible with v4.0 segmented queues.
+
+**Automatic**:
+1. Deploy v4.1
+2. Existing actors activate with new config (buffer_segments=1)
+3. Offloading starts automatically on next Push operations
+4. Existing segments remain in actor state until consumed or offloaded
+
+**No Migration Required**: Just deploy and offloading activates incrementally.
+
 ## API Changes
 
 **No API changes** - segmentation is fully transparent:
@@ -439,5 +708,6 @@ done
 
 ## Version
 
-- **Introduced**: v4.0.0
+- **Segmented Queues**: v4.0.0
+- **Segment Offloading**: v4.1.0
 - **Last Updated**: 2026-02-28

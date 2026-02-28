@@ -84,14 +84,16 @@ Example state for actor "my-queue" with 250 items in priority 0:
 // metadata
 {
   "config": {
-    "segment_size": 100
+    "segment_size": 100,
+    "buffer_segments": 1
   },
   "queues": {
     "queue_0": {
       "metadata": {
         "count": 250,
         "head_segment": 0,
-        "tail_segment": 2
+        "tail_segment": 2,
+        "offloaded_segments": []
       }
     }
   }
@@ -102,6 +104,7 @@ Example state for actor "my-queue" with 250 items in priority 0:
 - `head_segment`: Segment to pop from (oldest items)
 - `tail_segment`: Segment to push to (newest items)
 - `count`: Total items across all segments
+- `offloaded_segments`: List of segment numbers offloaded to state store (v4.1+)
 
 ### State Operations
 
@@ -129,6 +132,79 @@ Example state for actor "my-queue" with 250 items in priority 0:
 - **Network**: Serialize max 100 items instead of N items per save
 - **Performance**: Pop becomes O(1) instead of O(N) for list slicing
 
+### Segment Offloading (v4.1+)
+
+**Segment Offloading** is a memory optimization that moves "middle" full segments from the actor's state manager to the external Dapr state store, further reducing memory footprint while maintaining performance.
+
+**Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│             Actor State Manager (Memory)                │
+├─────────────────────────────────────────────────────────┤
+│  queue_0_seg_0 (head - active)        [100 items]      │
+│  queue_0_seg_1 (buffer)               [100 items]      │
+│  queue_0_seg_49 (tail - active)       [50 items]       │
+└─────────────────────────────────────────────────────────┘
+                         │
+                         │ offload/load
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│           State Store (PostgreSQL, Redis, etc.)         │
+├─────────────────────────────────────────────────────────┤
+│  offloaded_queue_0_seg_2_actor_id     [100 items]      │
+│  offloaded_queue_0_seg_3_actor_id     [100 items]      │
+│  ...                                                     │
+│  offloaded_queue_0_seg_48_actor_id    [100 items]      │
+└─────────────────────────────────────────────────────────┘
+
+Memory Usage: ~250 items instead of ~4,950 items (95% reduction)
+```
+
+**When Segments Are Offloaded:**
+
+A segment is eligible for offload when:
+1. Segment is full (100 items)
+2. `segment_num > head_segment + buffer_segments`
+3. `segment_num < tail_segment`
+
+**Configuration:**
+- `buffer_segments` (default: 1): Number of full segments to keep between head and offloaded segments
+  - Higher values = more memory, less latency
+  - Lower values = less memory, occasional load latency
+
+**Key Naming:**
+- Offloaded segments use format: `offloaded_queue_{priority}_seg_{segment_num}_{actor_id}`
+- Includes actor ID for global uniqueness in shared state store
+
+**Offload Flow** (during Push):
+1. After successful push, check if any segments are eligible
+2. For each eligible segment:
+   - Save segment to state store with offloaded key
+   - Add segment number to `offloaded_segments` list
+   - Remove segment from actor state manager
+3. Continue (non-blocking on failure)
+
+**Load Flow** (during Pop):
+1. Before accessing head segment, check if any offloaded segments need loading
+2. Load segments where `segment_num <= head_segment + buffer_segments`
+3. For each segment to load:
+   - Get segment from state store
+   - Save to actor state manager
+   - Remove from `offloaded_segments` list
+   - Delete from state store (cleanup)
+
+**Benefits:**
+- **Memory**: Reduces from O(N items) to O(buffer_segments × 100)
+- **Example**: 10,000 item queue uses ~300 items in memory (97% reduction)
+- **Transparent**: No API changes - offloading happens automatically
+- **Graceful**: Failures degrade to full memory mode (non-blocking)
+
+**Trade-offs:**
+- **Latency**: Loading segments from state store adds ~10-50ms per load
+- **Frequency**: Load happens once per 100 pops when entering buffer zone
+- **Tunable**: Increase `buffer_segments` to reduce load frequency
+
 ## Actor Lifecycle
 
 ### Activation
@@ -137,10 +213,16 @@ When an actor is first accessed:
 
 ```python
 async def _on_activate(self) -> None:
-    """Initialize empty queue if it doesn't exist."""
-    has_queue, _ = await self._state_manager.try_get_state("queue")
-    if not has_queue:
-        await self._state_manager.set_state("queue", [])
+    """Initialize metadata with config if it doesn't exist."""
+    has_metadata, _ = await self._state_manager.try_get_state("metadata")
+    if not has_metadata:
+        await self._state_manager.set_state("metadata", {
+            "config": {
+                "segment_size": 100,
+                "buffer_segments": 1
+            },
+            "queues": {}
+        })
         await self._state_manager.save_state()
 ```
 
@@ -295,6 +377,7 @@ metadata:
 - ✅ Automatic distribution across nodes
 - ✅ No Redis dependency (use any Dapr state store)
 - ✅ Type-safe interface
+- ✅ Memory optimized (segment offloading reduces memory by 95%+)
 - ❌ More overhead (actor framework)
 
 **Redis Queue:**
@@ -333,20 +416,24 @@ metadata:
 ## Best Practices
 
 1. **Use Descriptive Actor IDs**: `user-{userId}-tasks` not `queue-123`
-2. **Limit Queue Size**: Pop regularly to prevent unbounded growth
-3. **Monitor State Store**: Watch database size and performance
-4. **Batch Pop Operations**: Pop multiple items to reduce roundtrips
-5. **Handle Empty Queue**: Pop returns empty array, not error
-6. **Idempotent Consumers**: Operations may be retried on failure
+2. **Leverage Segment Offloading**: Default configuration (buffer_segments=1) provides excellent memory savings for large queues
+3. **Tune Buffer Segments**: Increase `buffer_segments` (2-5) for latency-sensitive applications
+4. **Monitor State Store**: Watch both actor state and offloaded segment storage
+5. **Pop Regularly**: While offloading handles large queues, regular consumption prevents unbounded growth
+6. **Handle Empty Queue**: Pop returns empty array, not error
+7. **Idempotent Consumers**: Operations may be retried on failure
 
 ## Limitations
 
 - **Not a Message Broker**: No pub/sub, routing, or dead letter queues
-- **Segmented Storage**: Max 100 items loaded into memory per operation (configurable)
+- **Segmented Storage**: Max 100 items per segment (configurable via `segment_size`)
+- **Memory Optimization**: With offloading enabled (v4.1+), only head, buffer, and tail segments kept in memory
 - **Priority-Based Ordering**: Items are FIFO within each priority level (0 = highest priority)
 - **No Transactions**: Push/Pop are separate operations
 - **State Store Dependency**: Requires configured Dapr state store
-- **Breaking Change**: Segmented queues incompatible with pre-v4.0 state format
+- **Breaking Changes**:
+  - Segmented queues incompatible with pre-v4.0 state format
+  - Offloading backward compatible with v4.0+ (no breaking change)
 
 ## Further Reading
 

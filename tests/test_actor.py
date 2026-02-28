@@ -26,6 +26,11 @@ class MockStateManager:
         """Mock set_state method."""
         self.state[key] = value
 
+    async def remove_state(self, key: str):
+        """Mock remove_state method."""
+        if key in self.state:
+            del self.state[key]
+
     async def save_state(self):
         """Mock save_state method."""
         pass
@@ -69,7 +74,7 @@ async def test_actor_activation(mock_actor):
     # Check that metadata was initialized
     has_metadata, metadata = await mock_actor._state_manager.try_get_state("metadata")
     assert has_metadata is True
-    assert metadata == {"config": {"segment_size": 100}, "queues": {}}
+    assert metadata == {"config": {"segment_size": 100, "buffer_segments": 1}, "queues": {}}
 
 
 @pytest.mark.asyncio
