@@ -92,8 +92,7 @@ Example state for actor "my-queue" with 250 items in priority 0:
       "metadata": {
         "count": 250,
         "head_segment": 0,
-        "tail_segment": 2,
-        "offloaded_segments": []
+        "tail_segment": 2
       }
     }
   }
@@ -104,7 +103,8 @@ Example state for actor "my-queue" with 250 items in priority 0:
 - `head_segment`: Segment to pop from (oldest items)
 - `tail_segment`: Segment to push to (newest items)
 - `count`: Total items across all segments
-- `offloaded_segments`: List of segment numbers offloaded to state store (v4.1+)
+- `head_offloaded_segment` (optional): First segment number in offloaded range (v4.1+)
+- `tail_offloaded_segment` (optional): Last segment number in offloaded range (v4.1+)
 
 ### State Operations
 
@@ -181,9 +181,11 @@ A segment is eligible for offload when:
 1. After successful push, check if any segments are eligible
 2. For each eligible segment:
    - Save segment to state store with offloaded key
-   - Add segment number to `offloaded_segments` list
+   - Extend offloaded range (`head_offloaded_segment`/`tail_offloaded_segment`)
    - Remove segment from actor state manager
 3. Continue (non-blocking on failure)
+
+**Note**: Offloaded segments are always contiguous, so they're stored as a range (min/max) rather than a list, preventing unbounded metadata growth.
 
 **Load Flow** (during Pop):
 1. Before accessing head segment, check if any offloaded segments need loading
@@ -191,7 +193,7 @@ A segment is eligible for offload when:
 3. For each segment to load:
    - Get segment from state store
    - Save to actor state manager
-   - Remove from `offloaded_segments` list
+   - Shrink offloaded range (increment `head_offloaded_segment`)
    - Delete from state store (cleanup)
 
 **Benefits:**

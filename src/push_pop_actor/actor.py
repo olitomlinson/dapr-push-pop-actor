@@ -169,13 +169,18 @@ class PushPopActor(Actor, PushPopActorInterface):
         """Get configured buffer_segments (default 1)"""
         return metadata.get("config", {}).get("buffer_segments", 1)
 
-    def _get_offloaded_segments(self, metadata: dict, priority: int) -> List[int]:
-        """Get list of offloaded segment numbers for priority (default empty list)"""
+    def _get_offloaded_range(self, metadata: dict, priority: int) -> Optional[tuple]:
+        """Get offloaded segment range (head, tail) for priority, or None if no offloaded segments"""
         queue_key = f"queue_{priority}"
-        return metadata.get("queues", {}).get(queue_key, {}).get("metadata", {}).get("offloaded_segments", [])
+        queue_metadata = metadata.get("queues", {}).get(queue_key, {}).get("metadata", {})
+        head = queue_metadata.get("head_offloaded_segment")
+        tail = queue_metadata.get("tail_offloaded_segment")
+        if head is not None and tail is not None:
+            return (head, tail)
+        return None
 
     def _add_offloaded_segment(self, metadata: dict, priority: int, segment_num: int) -> None:
-        """Add segment number to offloaded_segments list"""
+        """Add segment number to offloaded range (extends tail)"""
         queue_key = f"queue_{priority}"
         if "queues" not in metadata:
             metadata["queues"] = {}
@@ -183,18 +188,35 @@ class PushPopActor(Actor, PushPopActorInterface):
             metadata["queues"][queue_key] = {"metadata": {}}
         if "metadata" not in metadata["queues"][queue_key]:
             metadata["queues"][queue_key]["metadata"] = {}
-        if "offloaded_segments" not in metadata["queues"][queue_key]["metadata"]:
-            metadata["queues"][queue_key]["metadata"]["offloaded_segments"] = []
-        if segment_num not in metadata["queues"][queue_key]["metadata"]["offloaded_segments"]:
-            metadata["queues"][queue_key]["metadata"]["offloaded_segments"].append(segment_num)
+
+        queue_metadata = metadata["queues"][queue_key]["metadata"]
+
+        # If no range exists, initialize both head and tail
+        if "head_offloaded_segment" not in queue_metadata:
+            queue_metadata["head_offloaded_segment"] = segment_num
+            queue_metadata["tail_offloaded_segment"] = segment_num
+        else:
+            # Extend tail (segments should be added sequentially)
+            queue_metadata["tail_offloaded_segment"] = segment_num
 
     def _remove_offloaded_segment(self, metadata: dict, priority: int, segment_num: int) -> None:
-        """Remove segment number from offloaded_segments list"""
+        """Remove segment from offloaded range (shrinks from head)"""
         queue_key = f"queue_{priority}"
         if "queues" in metadata and queue_key in metadata["queues"]:
-            offloaded = metadata["queues"][queue_key].get("metadata", {}).get("offloaded_segments", [])
-            if segment_num in offloaded:
-                offloaded.remove(segment_num)
+            queue_metadata = metadata["queues"][queue_key].get("metadata", {})
+            head = queue_metadata.get("head_offloaded_segment")
+            tail = queue_metadata.get("tail_offloaded_segment")
+
+            if head is not None and tail is not None:
+                # Should only remove from head (FIFO)
+                if segment_num == head:
+                    if head == tail:
+                        # Last segment in range, clear both
+                        del queue_metadata["head_offloaded_segment"]
+                        del queue_metadata["tail_offloaded_segment"]
+                    else:
+                        # Move head forward
+                        queue_metadata["head_offloaded_segment"] = head + 1
 
     async def _on_activate(self) -> None:
         """
@@ -241,7 +263,7 @@ class PushPopActor(Actor, PushPopActorInterface):
                     value=json.dumps(segment_data)
                 )
 
-            # Add to offloaded_segments list
+            # Add to offloaded range
             self._add_offloaded_segment(metadata, priority, segment_num)
 
             # Delete from actor state manager
@@ -298,7 +320,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             segment_key = self._get_segment_key(priority, segment_num)
             await self._state_manager.set_state(segment_key, segment_data)
 
-            # Remove from offloaded_segments list
+            # Remove from offloaded range
             self._remove_offloaded_segment(metadata, priority, segment_num)
 
             # Delete from state store (synchronous context manager)
@@ -336,7 +358,7 @@ class PushPopActor(Actor, PushPopActorInterface):
             head_segment = self._get_head_segment(metadata, priority)
             tail_segment = self._get_tail_segment(metadata, priority)
             buffer_segments = self._get_buffer_segments(metadata)
-            offloaded_segments = self._get_offloaded_segments(metadata, priority)
+            offloaded_range = self._get_offloaded_range(metadata, priority)
             segment_size = self._get_segment_size(metadata)
 
             # Calculate eligible segment range
@@ -345,9 +367,11 @@ class PushPopActor(Actor, PushPopActorInterface):
 
             # Check each segment in range
             for segment_num in range(min_offload, max_offload):
-                # Skip if already offloaded
-                if segment_num in offloaded_segments:
-                    continue
+                # Skip if already offloaded (check if in range)
+                if offloaded_range is not None:
+                    head_offloaded, tail_offloaded = offloaded_range
+                    if head_offloaded <= segment_num <= tail_offloaded:
+                        continue
 
                 # Check if segment exists and is full
                 segment_key = self._get_segment_key(priority, segment_num)
@@ -367,20 +391,24 @@ class PushPopActor(Actor, PushPopActorInterface):
         Load segments where: segment_num <= head_segment + buffer_segments
         """
         try:
-            offloaded_segments = self._get_offloaded_segments(metadata, priority)
-            if not offloaded_segments:
+            offloaded_range = self._get_offloaded_range(metadata, priority)
+            if offloaded_range is None:
                 return
 
+            head_offloaded, tail_offloaded = offloaded_range
             head_segment = self._get_head_segment(metadata, priority)
             buffer_segments = self._get_buffer_segments(metadata)
 
             # Calculate which segments should be loaded
             max_offloaded = head_segment + buffer_segments
 
-            # Load segments that are within the buffer zone
-            for segment_num in offloaded_segments[:]:  # Use slice copy to avoid modification during iteration
+            # Load segments that are within the buffer zone (from head of offloaded range)
+            for segment_num in range(head_offloaded, tail_offloaded + 1):
                 if segment_num <= max_offloaded:
                     await self._load_offloaded_segment(priority, segment_num, metadata)
+                else:
+                    # Since segments are contiguous, we can break early
+                    break
 
         except Exception as e:
             logger.warning(f"Error checking/loading segments for priority {priority} (actor {self.actor_id}): {e}")

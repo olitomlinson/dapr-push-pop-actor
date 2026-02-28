@@ -176,7 +176,8 @@ Add `buffer_segments` to metadata config:
         "count": 500,
         "head_segment": 0,
         "tail_segment": 4,
-        "offloaded_segments": [2, 3]
+        "head_offloaded_segment": 2,
+        "tail_offloaded_segment": 3
       }
     }
   }
@@ -215,9 +216,11 @@ offloaded_queue_{priority}_seg_{segment_num}_{actor_id}
 
 **Process**:
 1. Save segment data to state store with offloaded key
-2. Add segment number to `offloaded_segments` list in metadata
+2. Extend offloaded range (`head_offloaded_segment`/`tail_offloaded_segment`) in metadata
 3. Delete segment from actor state manager
 4. Continue (non-blocking on failure)
+
+**Note**: Offloaded segments are always contiguous, so they're stored as a range (min/max) rather than a list to prevent unbounded metadata growth.
 
 #### When Segments Are Loaded Back
 
@@ -227,7 +230,7 @@ offloaded_queue_{priority}_seg_{segment_num}_{actor_id}
 **Process**:
 1. Load segment data from state store
 2. Save to actor state manager
-3. Remove from `offloaded_segments` list
+3. Shrink offloaded range (increment `head_offloaded_segment`)
 4. Delete from state store (cleanup)
 
 #### Example Flow
@@ -246,7 +249,7 @@ Memory Usage:       ~500 items
 In Actor State:     segments 0, 1, 4
 In State Store:     segments 2, 3
 Memory Usage:       ~300 items (40% reduction)
-Metadata:           offloaded_segments: [2, 3]
+Metadata:           head_offloaded_segment: 2, tail_offloaded_segment: 3
 ```
 
 **After Pop 100 Items** (head=1, tail=4):
@@ -255,7 +258,7 @@ Segment 2 auto-loaded (within buffer distance)
 In Actor State:     segments 1, 2, 4
 In State Store:     segment 3
 Memory Usage:       ~300 items
-Metadata:           offloaded_segments: [3]
+Metadata:           head_offloaded_segment: 3, tail_offloaded_segment: 3
 ```
 
 ### Performance Characteristics
@@ -332,7 +335,7 @@ WARNING: Failed to offload segment 3 for priority 0 (actor user-queue-123): conn
 ```python
 _get_offloaded_segment_key(priority, segment_num)           # Generate state store key
 _get_buffer_segments(metadata)                              # Get configured buffer size
-_get_offloaded_segments(metadata, priority)                 # Get offloaded list
+_get_offloaded_range(metadata, priority)                    # Get offloaded range (head, tail)
 _offload_segment(priority, segment_num, segment_data)       # Move to state store
 _load_offloaded_segment(priority, segment_num)              # Load from state store
 _check_and_offload_segments(priority, metadata)             # Check eligibility, offload
