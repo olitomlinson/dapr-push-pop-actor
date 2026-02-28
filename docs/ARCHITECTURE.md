@@ -144,18 +144,6 @@ Actor "queue-2" → Pop()   ─┼─▶ [Processing independently]
 Actor "queue-3" → Push()  ─┴─▶ [Processing independently]
 ```
 
-### Reentrancy
-
-The actor configuration enables reentrancy:
-
-```yaml
-features:
-- name: Actor.Reentrancy
-  enabled: true
-```
-
-This allows an actor to call itself or other actors without deadlocking.
-
 ## Scalability
 
 ### Horizontal Scaling
@@ -183,18 +171,6 @@ Dapr's placement service:
 - Tracks which actors are on which app instances
 - Routes requests to correct instance
 - Handles actor migration during scaling/failures
-
-### Performance Characteristics
-
-**Push Operation:**
-- Time: O(1) amortized (append to array)
-- Space: O(1) per item
-- Network: 1 state store write
-
-**Pop Operation:**
-- Time: O(n) where n = depth (slice array)
-- Space: O(n) where n = depth
-- Network: 1 state store read + 1 write
 
 ## Integration Patterns
 
@@ -229,24 +205,6 @@ curl -X POST http://localhost:8000/queue/queue-1/push
 **Cons:**
 - HTTP overhead
 - Requires API server
-
-### 3. Dapr Service Invocation
-
-```bash
-dapr invoke \
-  --app-id push-pop-service \
-  --method queue/queue-1/push \
-  --verb POST
-```
-
-**Pros:**
-- Built-in service discovery
-- mTLS encryption
-- Observability hooks
-
-**Cons:**
-- Requires Dapr sidecar on caller
-- Indirect (goes through sidecar)
 
 ## Failure Handling
 
