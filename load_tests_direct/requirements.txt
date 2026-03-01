@@ -1,0 +1,16 @@
+# Locust and HTTP client
+locust==2.24.1
+httpx==0.27.0
+
+# Dapr SDK for direct actor invocation
+dapr>=1.17.0rc5
+dapr-ext-fastapi>=1.17.0rc5
+
+# Data analysis
+pandas==2.2.0
+
+# System monitoring
+psutil>=5.9.8
+
+# Metrics collection
+prometheus_client==0.19.0

@@ -248,6 +248,32 @@ services:
     networks:
       - pushpop-network
 
+  ############################
+  # Locust Load Testing - Direct Actor Invocation
+  ############################
+  locust-direct:
+    build:
+      context: ./load_tests_direct
+      dockerfile: Dockerfile
+    container_name: locust-direct
+    command: ["locust", "--web-host=0.0.0.0", "--web-port=8089", "--class-picker"]
+    ports:
+      - "8090:8089"  # Different host port than API locust (8089)
+    volumes:
+      - ./load_tests_direct:/home/locust:delegated
+      - ./src:/app/src:ro  # Mount src for push_pop_actor import
+    environment:
+      - LOCUST_LOCUSTFILE=/home/locust/locustfile.py
+      - DAPR_RUNTIME_HOST=api-server-dapr  # Dapr sidecar hostname
+      - DAPR_HTTP_PORT=3500  # Dapr HTTP port
+      - DAPR_GRPC_PORT=50001  # Dapr gRPC port (for actor invocations)
+      - PYTHONPATH=/app/src  # Add /app/src to Python path for push_pop_actor import
+    depends_on:
+      - api-server-dapr
+      - placement
+    networks:
+      - pushpop-network
+
 networks:
   pushpop-network:
     driver: bridge
