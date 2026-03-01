@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "dgSpecHash": "i5OA9o+Sqmw=",
+  "success": true,
+  "projectFilePath": "/Users/olivertomlinson/Desktop/dev/dapr-push-pop-actor/dotnet/src/PushPopActor.ApiServer/PushPopActor.ApiServer.csproj",
+  "expectedPackageFiles": [
+    "/Users/olivertomlinson/.nuget/packages/dapr.actors/1.17.0/dapr.actors.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.actors.aspnetcore/1.17.0/dapr.actors.aspnetcore.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.aspnetcore/1.17.0/dapr.aspnetcore.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.client/1.17.0/dapr.client.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.common/1.17.0/dapr.common.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.protos/1.17.0/dapr.protos.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/google.api.commonprotos/2.17.0/google.api.commonprotos.2.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/google.protobuf/3.33.4/google.protobuf.3.33.4.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/grpc.core.api/2.76.0/grpc.core.api.2.76.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/grpc.net.client/2.76.0/grpc.net.client.2.76.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/grpc.net.common/2.76.0/grpc.net.common.2.76.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.aspnetcore.openapi/10.0.3/microsoft.aspnetcore.openapi.10.0.3.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.apidescription.server/10.0.0/microsoft.extensions.apidescription.server.10.0.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.openapi/2.4.1/microsoft.openapi.2.4.1.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/swashbuckle.aspnetcore/10.1.4/swashbuckle.aspnetcore.10.1.4.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/swashbuckle.aspnetcore.swagger/10.1.4/swashbuckle.aspnetcore.swagger.10.1.4.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/swashbuckle.aspnetcore.swaggergen/10.1.4/swashbuckle.aspnetcore.swaggergen.10.1.4.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/swashbuckle.aspnetcore.swaggerui/10.1.4/swashbuckle.aspnetcore.swaggerui.10.1.4.nupkg.sha512"
+  ],
+  "logs": []
+}

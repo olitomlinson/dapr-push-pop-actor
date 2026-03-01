@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "dgSpecHash": "oaM9vnXrjC0=",
+  "success": true,
+  "projectFilePath": "/Users/olivertomlinson/Desktop/dev/dapr-push-pop-actor/dotnet/src/PushPopActor/PushPopActor.csproj",
+  "expectedPackageFiles": [
+    "/Users/olivertomlinson/.nuget/packages/dapr.actors/1.17.0/dapr.actors.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.client/1.17.0/dapr.client.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.common/1.17.0/dapr.common.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/dapr.protos/1.17.0/dapr.protos.1.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/google.api.commonprotos/2.17.0/google.api.commonprotos.2.17.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/google.protobuf/3.33.4/google.protobuf.3.33.4.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/grpc.core.api/2.76.0/grpc.core.api.2.76.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/grpc.net.client/2.76.0/grpc.net.client.2.76.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/grpc.net.common/2.76.0/grpc.net.common.2.76.0.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.configuration/10.0.2/microsoft.extensions.configuration.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.configuration.abstractions/10.0.2/microsoft.extensions.configuration.abstractions.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.configuration.binder/10.0.2/microsoft.extensions.configuration.binder.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.dependencyinjection/10.0.2/microsoft.extensions.dependencyinjection.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.dependencyinjection.abstractions/10.0.3/microsoft.extensions.dependencyinjection.abstractions.10.0.3.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.diagnostics/10.0.2/microsoft.extensions.diagnostics.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.diagnostics.abstractions/10.0.2/microsoft.extensions.diagnostics.abstractions.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.http/10.0.2/microsoft.extensions.http.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.logging/10.0.2/microsoft.extensions.logging.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.logging.abstractions/10.0.3/microsoft.extensions.logging.abstractions.10.0.3.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.options/10.0.2/microsoft.extensions.options.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.options.configurationextensions/10.0.2/microsoft.extensions.options.configurationextensions.10.0.2.nupkg.sha512",
+    "/Users/olivertomlinson/.nuget/packages/microsoft.extensions.primitives/10.0.2/microsoft.extensions.primitives.10.0.2.nupkg.sha512"
+  ],
+  "logs": []
+}

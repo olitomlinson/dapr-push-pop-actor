@@ -1,0 +1,375 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "PushPopActor.ApiServer/1.0.0": {
+        "dependencies": {
+          "Dapr.Actors.AspNetCore": "1.17.0",
+          "Dapr.AspNetCore": "1.17.0",
+          "Microsoft.AspNetCore.OpenApi": "10.0.3",
+          "PushPopActor": "1.0.0",
+          "PushPopActor.Interfaces": "1.0.0",
+          "Swashbuckle.AspNetCore": "10.1.4"
+        },
+        "runtime": {
+          "PushPopActor.ApiServer.dll": {}
+        }
+      },
+      "Dapr.Actors/1.17.0": {
+        "dependencies": {
+          "Dapr.Client": "1.17.0",
+          "Dapr.Common": "1.17.0",
+          "Google.Api.CommonProtos": "2.17.0",
+          "Google.Protobuf": "3.33.4",
+          "Grpc.Net.Client": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Dapr.Actors.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.17.0.0"
+          }
+        }
+      },
+      "Dapr.Actors.AspNetCore/1.17.0": {
+        "dependencies": {
+          "Dapr.Actors": "1.17.0",
+          "Dapr.Common": "1.17.0",
+          "Google.Api.CommonProtos": "2.17.0",
+          "Google.Protobuf": "3.33.4",
+          "Grpc.Net.Client": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Dapr.Actors.AspNetCore.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.17.0.0"
+          }
+        }
+      },
+      "Dapr.AspNetCore/1.17.0": {
+        "dependencies": {
+          "Dapr.Client": "1.17.0",
+          "Dapr.Common": "1.17.0",
+          "Google.Api.CommonProtos": "2.17.0",
+          "Google.Protobuf": "3.33.4",
+          "Grpc.Net.Client": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Dapr.AspNetCore.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.17.0.0"
+          }
+        }
+      },
+      "Dapr.Client/1.17.0": {
+        "dependencies": {
+          "Dapr.Common": "1.17.0",
+          "Dapr.Protos": "1.17.0",
+          "Google.Api.CommonProtos": "2.17.0",
+          "Google.Protobuf": "3.33.4",
+          "Grpc.Net.Client": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Dapr.Client.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.17.0.0"
+          }
+        }
+      },
+      "Dapr.Common/1.17.0": {
+        "dependencies": {
+          "Dapr.Protos": "1.17.0",
+          "Google.Api.CommonProtos": "2.17.0",
+          "Google.Protobuf": "3.33.4",
+          "Grpc.Net.Client": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Dapr.Common.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.17.0.0"
+          }
+        }
+      },
+      "Dapr.Protos/1.17.0": {
+        "dependencies": {
+          "Google.Api.CommonProtos": "2.17.0",
+          "Google.Protobuf": "3.33.4",
+          "Grpc.Net.Client": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Dapr.Protos.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.17.0.0"
+          }
+        }
+      },
+      "Google.Api.CommonProtos/2.17.0": {
+        "dependencies": {
+          "Google.Protobuf": "3.33.4"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Google.Api.CommonProtos.dll": {
+            "assemblyVersion": "2.17.0.0",
+            "fileVersion": "2.17.0.0"
+          }
+        }
+      },
+      "Google.Protobuf/3.33.4": {
+        "runtime": {
+          "lib/net5.0/Google.Protobuf.dll": {
+            "assemblyVersion": "3.33.4.0",
+            "fileVersion": "3.33.4.0"
+          }
+        }
+      },
+      "Grpc.Core.Api/2.76.0": {
+        "runtime": {
+          "lib/netstandard2.1/Grpc.Core.Api.dll": {
+            "assemblyVersion": "2.0.0.0",
+            "fileVersion": "2.76.0.0"
+          }
+        }
+      },
+      "Grpc.Net.Client/2.76.0": {
+        "dependencies": {
+          "Grpc.Net.Common": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Grpc.Net.Client.dll": {
+            "assemblyVersion": "2.0.0.0",
+            "fileVersion": "2.76.0.0"
+          }
+        }
+      },
+      "Grpc.Net.Common/2.76.0": {
+        "dependencies": {
+          "Grpc.Core.Api": "2.76.0"
+        },
+        "runtime": {
+          "lib/net10.0/Grpc.Net.Common.dll": {
+            "assemblyVersion": "2.0.0.0",
+            "fileVersion": "2.76.0.0"
+          }
+        }
+      },
+      "Microsoft.AspNetCore.OpenApi/10.0.3": {
+        "dependencies": {
+          "Microsoft.OpenApi": "2.4.1"
+        },
+        "runtime": {
+          "lib/net10.0/Microsoft.AspNetCore.OpenApi.dll": {
+            "assemblyVersion": "10.0.3.0",
+            "fileVersion": "10.0.326.7603"
+          }
+        }
+      },
+      "Microsoft.OpenApi/2.4.1": {
+        "runtime": {
+          "lib/net8.0/Microsoft.OpenApi.dll": {
+            "assemblyVersion": "2.4.1.0",
+            "fileVersion": "2.4.1.0"
+          }
+        }
+      },
+      "Swashbuckle.AspNetCore/10.1.4": {
+        "dependencies": {
+          "Swashbuckle.AspNetCore.Swagger": "10.1.4",
+          "Swashbuckle.AspNetCore.SwaggerGen": "10.1.4",
+          "Swashbuckle.AspNetCore.SwaggerUI": "10.1.4"
+        }
+      },
+      "Swashbuckle.AspNetCore.Swagger/10.1.4": {
+        "dependencies": {
+          "Microsoft.OpenApi": "2.4.1"
+        },
+        "runtime": {
+          "lib/net10.0/Swashbuckle.AspNetCore.Swagger.dll": {
+            "assemblyVersion": "10.1.4.0",
+            "fileVersion": "10.1.4.2255"
+          }
+        }
+      },
+      "Swashbuckle.AspNetCore.SwaggerGen/10.1.4": {
+        "dependencies": {
+          "Swashbuckle.AspNetCore.Swagger": "10.1.4"
+        },
+        "runtime": {
+          "lib/net10.0/Swashbuckle.AspNetCore.SwaggerGen.dll": {
+            "assemblyVersion": "10.1.4.0",
+            "fileVersion": "10.1.4.2255"
+          }
+        }
+      },
+      "Swashbuckle.AspNetCore.SwaggerUI/10.1.4": {
+        "runtime": {
+          "lib/net10.0/Swashbuckle.AspNetCore.SwaggerUI.dll": {
+            "assemblyVersion": "10.1.4.0",
+            "fileVersion": "10.1.4.2255"
+          }
+        }
+      },
+      "PushPopActor/1.0.0": {
+        "dependencies": {
+          "Dapr.Actors": "1.17.0",
+          "PushPopActor.Interfaces": "1.0.0"
+        },
+        "runtime": {
+          "PushPopActor.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "PushPopActor.Interfaces/1.0.0": {
+        "dependencies": {
+          "Dapr.Actors": "1.17.0"
+        },
+        "runtime": {
+          "PushPopActor.Interfaces.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "PushPopActor.ApiServer/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "Dapr.Actors/1.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-YUjVTUhy+jqFhJRC7RJLry0+59FvscqY6rZJHTXQbGIKz0M8lB4HVzeiYQb7WRLPaEy/28MfurdqB7inlYo9/g==",
+      "path": "dapr.actors/1.17.0",
+      "hashPath": "dapr.actors.1.17.0.nupkg.sha512"
+    },
+    "Dapr.Actors.AspNetCore/1.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-kP1XajqW/9lKjQklNBSjEK6kXZN4xKvLk6IbWnbW3mJDMYH6rSGFO8BDJ509/R9IXXBqhebWKtiYs3pyPJCFZg==",
+      "path": "dapr.actors.aspnetcore/1.17.0",
+      "hashPath": "dapr.actors.aspnetcore.1.17.0.nupkg.sha512"
+    },
+    "Dapr.AspNetCore/1.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-Z2D+OVWcqzSufMxaql3TFwZ0UeTenGKnAhRklR9ezXYjX13R+RHbTdfqfxeGzKOsJy43YBtzSXPlpOYiXTRiMQ==",
+      "path": "dapr.aspnetcore/1.17.0",
+      "hashPath": "dapr.aspnetcore.1.17.0.nupkg.sha512"
+    },
+    "Dapr.Client/1.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-6+vCFxQHSLACn/Pf9KlC6MVEVjc+j2FK7RBkJyyIZQc8URsraOsrq+AfpgVePsMlGxMI/HE9W8gQF2hPVOlypQ==",
+      "path": "dapr.client/1.17.0",
+      "hashPath": "dapr.client.1.17.0.nupkg.sha512"
+    },
+    "Dapr.Common/1.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-AbEwxzVWhMTrTA8JwD3WfUdYCh35mUPkhOqr4Zq7a28/Q1cZaOzgRAphGvcKAfjmuuzWss5jW5l8G/Cd9oZQWw==",
+      "path": "dapr.common/1.17.0",
+      "hashPath": "dapr.common.1.17.0.nupkg.sha512"
+    },
+    "Dapr.Protos/1.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-QFViynRWe7p5tEXjv4f2YVS7EyGCb2bC6/YZ1s06zaXtLSl6GkgcPRT57Gv7g7xhw3QTr8cduinLBsustWxf0g==",
+      "path": "dapr.protos/1.17.0",
+      "hashPath": "dapr.protos.1.17.0.nupkg.sha512"
+    },
+    "Google.Api.CommonProtos/2.17.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-elfQPknFr495hm7vdy6ZlgyQh6yzZq9TU7sS35L/Fj/fqjM/mUGau9gVJLhvQEtUlPjtR80hpn/m9HvBMyCXIw==",
+      "path": "google.api.commonprotos/2.17.0",
+      "hashPath": "google.api.commonprotos.2.17.0.nupkg.sha512"
+    },
+    "Google.Protobuf/3.33.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-8uRKKkDp+0Clqz1GqH6aTQtQsDJJyWhw9Owo1jsplIdNR7SIPehLVq4+5zccXkjOVbR6OcjEvL4MlrVSTme2IA==",
+      "path": "google.protobuf/3.33.4",
+      "hashPath": "google.protobuf.3.33.4.nupkg.sha512"
+    },
+    "Grpc.Core.Api/2.76.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-cSxC2tdnFdXXuBgIn1pjc4YBx7LXTCp4M0qn+SMBS35VWZY+cEQYLWTBDDhdBH1HzU7BV+ncVZlniGQHMpRJKQ==",
+      "path": "grpc.core.api/2.76.0",
+      "hashPath": "grpc.core.api.2.76.0.nupkg.sha512"
+    },
+    "Grpc.Net.Client/2.76.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-K1oldmqw2+Gn69nGRzZLhqSiUZwelX1GrBu/cUl9wNf1C0uB61vFS6JcxUUv9P8VoUJhFsmV44JA6lI2EUt4xw==",
+      "path": "grpc.net.client/2.76.0",
+      "hashPath": "grpc.net.client.2.76.0.nupkg.sha512"
+    },
+    "Grpc.Net.Common/2.76.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-bZpiMVYgvpB44/wBh1RotrkqC7bg2FOasLri2GhR3hMKyzsiTxCoDE49YjPrJeFc4RW0wS8u+EInI09sjxVFRA==",
+      "path": "grpc.net.common/2.76.0",
+      "hashPath": "grpc.net.common.2.76.0.nupkg.sha512"
+    },
+    "Microsoft.AspNetCore.OpenApi/10.0.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-SAvSrKDgnY5GDjDAngOXxPhUvEKlTU/0zIq8zidqHvh/xnZBPs0Vc4LqwyvnmnafNnyUaivtRABz4K4wodXfSg==",
+      "path": "microsoft.aspnetcore.openapi/10.0.3",
+      "hashPath": "microsoft.aspnetcore.openapi.10.0.3.nupkg.sha512"
+    },
+    "Microsoft.OpenApi/2.4.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-u7QhXCISMQuab3flasb1hoaiERmUqyWsW7tmQODyILoQ7mJV5IRGM+2KKZYo0QUfC13evEOcHAb6TPWgqEQtrw==",
+      "path": "microsoft.openapi/2.4.1",
+      "hashPath": "microsoft.openapi.2.4.1.nupkg.sha512"
+    },
+    "Swashbuckle.AspNetCore/10.1.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-3y9YcUdzND3E21NiGvhxEVw2/rdQSbSLDOxrAMP96ZCaDVeB8b30L8QeWA9cfkxfyeXt+F2t1umKE0kaPxm4FA==",
+      "path": "swashbuckle.aspnetcore/10.1.4",
+      "hashPath": "swashbuckle.aspnetcore.10.1.4.nupkg.sha512"
+    },
+    "Swashbuckle.AspNetCore.Swagger/10.1.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-4ac45rVXsgustOXx6abChvIXtWjc1gUgwEpExz8pkQTTXjVTuRtfyMCN0srgxwpIAw/UoH/LYcbgqrjRcYwhfg==",
+      "path": "swashbuckle.aspnetcore.swagger/10.1.4",
+      "hashPath": "swashbuckle.aspnetcore.swagger.10.1.4.nupkg.sha512"
+    },
+    "Swashbuckle.AspNetCore.SwaggerGen/10.1.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-gbh8gJ97lMw0ScCdbEhAzwlHSWKiTzYtHfS6/e7u4e4c0ms6mOccLFgRsWF0ekgpDh+AlA0yWc5X5ec+6cxCXQ==",
+      "path": "swashbuckle.aspnetcore.swaggergen/10.1.4",
+      "hashPath": "swashbuckle.aspnetcore.swaggergen.10.1.4.nupkg.sha512"
+    },
+    "Swashbuckle.AspNetCore.SwaggerUI/10.1.4": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-A1ewmv/Xq5YkjQoSW29Kc9IoIC6pu210F1Fmzmj1EO7QJLTs6w3tOJatST6s41+Y8eUr5A1JLiXZ14U5EgN6ow==",
+      "path": "swashbuckle.aspnetcore.swaggerui/10.1.4",
+      "hashPath": "swashbuckle.aspnetcore.swaggerui.10.1.4.nupkg.sha512"
+    },
+    "PushPopActor/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "PushPopActor.Interfaces/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
