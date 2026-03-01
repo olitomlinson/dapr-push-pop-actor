@@ -546,8 +546,8 @@ class PushPopActor(Actor, PushPopActorInterface):
                 if len(segment) == 0:
                     if head_segment < tail_segment:
                         # More segments exist, move to next
-                        # Clear the empty segment from state
-                        await self._state_manager.set_state(segment_key, [])
+                        # Delete the empty segment from state
+                        await self._state_manager.remove_state(segment_key)
                         head_segment += 1
                         # Update metadata pointers
                         new_count = count - 1
@@ -562,8 +562,8 @@ class PushPopActor(Actor, PushPopActorInterface):
                         return [item]
                     else:
                         # Last segment empty, queue is now empty
-                        # Clear the segment from state (set to empty list to effectively delete it)
-                        await self._state_manager.set_state(segment_key, [])
+                        # Delete the segment from state
+                        await self._state_manager.remove_state(segment_key)
                         self._delete_queue_metadata(metadata, priority)
                         await self._state_manager.set_state("metadata", metadata)
                         await self._state_manager.save_state()
@@ -755,8 +755,8 @@ class PushPopActor(Actor, PushPopActorInterface):
                 if len(segment) == 0:
                     if head_segment < tail_segment:
                         # More segments exist, move to next
-                        # Clear the empty segment from state
-                        await self._state_manager.set_state(segment_key, [])
+                        # Delete the empty segment from state
+                        await self._state_manager.remove_state(segment_key)
                         head_segment += 1
                     # If head_segment == tail_segment, we'll handle this after creating lock
                 else:
