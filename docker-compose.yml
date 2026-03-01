@@ -64,7 +64,7 @@ services:
   api-server:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: src/Dockerfile
     environment:
       - DAPR_GRPC_ENDPOINT=http://api-server-dapr:50001
       - DAPR_HTTP_ENDPOINT=http://api-server-dapr:3500
@@ -132,7 +132,7 @@ services:
   api-server-2:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: src/Dockerfile
     environment:
       - DAPR_GRPC_ENDPOINT=http://api-server-dapr-2:50002
       - DAPR_HTTP_ENDPOINT=http://api-server-dapr-2:3501
