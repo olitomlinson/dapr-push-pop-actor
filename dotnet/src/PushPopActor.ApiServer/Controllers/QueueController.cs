@@ -37,8 +37,8 @@ public class QueueController : ControllerBase
             var actorId = new ActorId(queueId);
             var proxy = ActorProxy.Create<IPushPopActor>(actorId, "PushPopActor");
 
-            // Serialize the item dictionary to JSON string for the actor
-            var itemJson = JsonSerializer.Serialize(request.Item);
+            // Get raw JSON string from JsonElement (no unnecessary deserialization)
+            var itemJson = request.Item.GetRawText();
 
             var result = await proxy.Push(new PushRequest
             {
@@ -97,9 +97,9 @@ public class QueueController : ControllerBase
                     });
                 }
 
-                // Deserialize JSON strings back to objects for API response
+                // Parse JSON strings to JsonElement for API response (no unnecessary deserialization)
                 var items = result.ItemsJson
-                    .Select(json => JsonSerializer.Deserialize<Dictionary<string, object>>(json))
+                    .Select(json => JsonDocument.Parse(json).RootElement)
                     .ToList();
 
                 return Ok(new
@@ -116,11 +116,11 @@ public class QueueController : ControllerBase
             {
                 var result = await proxy.Pop();
 
-                // Deserialize JSON string back to object for API response
+                // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
                 object? item = null;
                 if (result.ItemsJson.Count > 0)
                 {
-                    item = JsonSerializer.Deserialize<Dictionary<string, object>>(result.ItemsJson[0]);
+                    item = JsonDocument.Parse(result.ItemsJson[0]).RootElement;
                 }
 
                 return Ok(new { item });
@@ -202,7 +202,7 @@ public class QueueController : ControllerBase
 
 // Request/Response models for API endpoints
 public record ApiPushRequest(
-    Dictionary<string, object> Item,
+    JsonElement Item,
     int Priority = 0
 );
 
