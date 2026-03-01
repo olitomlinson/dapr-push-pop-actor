@@ -241,11 +241,10 @@ services:
       - ./load_tests:/home/locust:delegated
     environment:
       - LOCUST_LOCUSTFILE=/home/locust/locustfile.py
+      # Comma-separated list of target hosts for round-robin load balancing
+      - TARGET_HOSTS=http://api-server:8000,http://api-server-2:8000
+      # Legacy single host env var (kept for backwards compatibility)
       - TARGET_HOST=http://api-server:8000
-      - TARGET_DAPR_HOST=http://api-server-dapr:3500
-    depends_on:
-      api-server-dapr:
-        condition: service_healthy
     networks:
       - pushpop-network
 

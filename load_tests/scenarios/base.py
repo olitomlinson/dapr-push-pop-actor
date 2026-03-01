@@ -11,8 +11,22 @@ Provides common functionality:
 import time
 import random
 import string
+import os
+import itertools
 from typing import Dict, Any, Optional
 from locust import HttpUser, task, between, events
+
+# Parse multiple target hosts from environment for load balancing
+_TARGET_HOSTS_STR = os.getenv("TARGET_HOSTS", "http://api-server:8000")
+TARGET_HOSTS = [h.strip() for h in _TARGET_HOSTS_STR.split(",") if h.strip()]
+
+# Round-robin iterator across all hosts (shared across all users)
+_host_cycle = itertools.cycle(TARGET_HOSTS)
+
+
+def get_next_host() -> str:
+    """Get the next host in round-robin order."""
+    return next(_host_cycle)
 
 
 class BasePushPopUser(HttpUser):
@@ -21,6 +35,8 @@ class BasePushPopUser(HttpUser):
 
     All scenario-specific users should inherit from this class to get
     consistent timing, metrics, and helper methods.
+
+    Supports load balancing across multiple target hosts via TARGET_HOSTS env var.
     """
 
     # Default wait time between tasks (can be overridden in subclasses)
@@ -104,9 +120,12 @@ class BasePushPopUser(HttpUser):
         # High-resolution timing
         start_time = time.perf_counter()
 
+        # Select next host in round-robin fashion
+        target_host = get_next_host()
+
         try:
             with self.client.post(
-                f"/queue/{queue_id}/push",
+                f"{target_host}/queue/{queue_id}/push",
                 json=payload,
                 catch_response=True,
                 name=name
@@ -157,9 +176,12 @@ class BasePushPopUser(HttpUser):
         # High-resolution timing
         start_time = time.perf_counter()
 
+        # Select next host in round-robin fashion
+        target_host = get_next_host()
+
         try:
             with self.client.post(
-                f"/queue/{queue_id}/pop",
+                f"{target_host}/queue/{queue_id}/pop",
                 catch_response=True,
                 name=name
             ) as response:
@@ -218,6 +240,7 @@ def on_test_start(environment, **kwargs):
     """Log test start."""
     print(f"\n=== Load test starting ===")
     print(f"Host: {environment.host}")
+    print(f"Target hosts (round-robin): {TARGET_HOSTS}")
     print(f"Users: {environment.runner.target_user_count if environment.runner else 'N/A'}")
 
 
