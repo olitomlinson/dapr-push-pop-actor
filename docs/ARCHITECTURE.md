@@ -296,6 +296,10 @@ Dapr's placement service:
 
 ### 1. Direct Actor Invocation
 
+There are two ways to invoke actors directly: **remoting** (interface-based) and **nonremoting** (method name strings).
+
+#### Remoting (Interface-Based)
+
 ```csharp
 using Dapr.Actors.Client;
 using PushPopActor.Interfaces;
@@ -305,12 +309,40 @@ await proxy.Push(new PushRequest { ItemJson = itemJson, Priority = 0 });
 ```
 
 **Pros:**
-- Direct access, no HTTP overhead
-- Type-safe with interface
+- Type-safe with compile-time checking
+- IntelliSense support
+- Refactoring-friendly
 
 **Cons:**
-- Requires Dapr SDK
-- Language-specific (C#, Java, Python, etc.)
+- Requires shared interface definitions
+- Tight coupling between client and actor
+- Recompilation needed when interfaces change
+
+#### Nonremoting (Method Name Strings)
+
+```csharp
+using Dapr.Actors.Client;
+using PushPopActor.Interfaces;  // Only for request/response models
+
+var proxy = ActorProxy.Create(new ActorId("my-queue"), "PushPopActor");
+var result = await proxy.InvokeMethodAsync<PushRequest, PushResponse>(
+    "Push",
+    new PushRequest { ItemJson = itemJson, Priority = 0 }
+);
+```
+
+**Pros:**
+- Decoupled from actor interface
+- Enables cross-language scenarios
+- Aligns with Dapr's HTTP-based actor protocol
+- No need to share compiled interfaces
+
+**Cons:**
+- Method names are strings (typo risk - mitigated by constants)
+- No IntelliSense for method names
+- Generic type parameters required for type safety
+
+**Note**: The included API server (PushPopActor.ApiServer) uses the nonremoting approach with method name constants for better maintainability
 
 ### 2. REST API
 

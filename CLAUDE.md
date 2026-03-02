@@ -181,6 +181,20 @@ using PushPopActor.Interfaces;
    - State key: `queue`
    - Full API reference: https://docs.dapr.io/reference/api/actors_api/
 
+8. **Nonremoting Actor Invocations**: The API server uses Dapr's nonremoting mechanism (`InvokeMethodAsync`) for actor calls instead of interface-based remoting. This provides better decoupling and enables cross-language scenarios:
+   ```csharp
+   // Nonremoting approach (used by API server)
+   var proxy = ActorProxy.Create(actorId, "PushPopActor");
+   var result = await proxy.InvokeMethodAsync<PushRequest, PushResponse>("Push", request);
+
+   // Remoting approach (still supported for library users)
+   var proxy = ActorProxy.Create<IPushPopActor>(actorId, "PushPopActor");
+   var result = await proxy.Push(request);
+   ```
+   - Both approaches work with the same actor implementation
+   - Nonremoting is recommended for API servers and cross-language scenarios
+   - Remoting is convenient for type-safe C# applications
+
 ## Future Considerations
 
 - Max queue size limits (currently unbounded)

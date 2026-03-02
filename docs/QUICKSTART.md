@@ -86,27 +86,59 @@ app.Run();
 
 ### 3. Use the Actor
 
+There are two ways to invoke actors: **remoting** (interface-based, type-safe) and **nonremoting** (method strings, decoupled).
+
+#### Option A: Remoting (Recommended for C# apps)
+
 ```csharp
 using Dapr.Actors;
 using Dapr.Actors.Client;
 using PushPopActor.Interfaces;
 
-// Create proxy
+// Create proxy with interface
 var proxy = ActorProxy.Create<IPushPopActor>(
     new ActorId("my-queue"),
     "PushPopActor"
 );
 
-// Push items
+// Push items (type-safe)
 await proxy.Push(new PushRequest
 {
     ItemJson = "{\"task\": \"send_email\"}",
     Priority = 0
 });
 
-// Pop items
+// Pop items (type-safe)
 var result = await proxy.Pop();
 foreach (var itemJson in result.ItemsJson)
+{
+    // Process item
+}
+```
+
+#### Option B: Nonremoting (Recommended for API servers / cross-language)
+
+```csharp
+using Dapr.Actors;
+using Dapr.Actors.Client;
+using PushPopActor.Interfaces;  // Only for request/response models
+
+// Create proxy without interface
+var proxy = ActorProxy.Create(new ActorId("my-queue"), "PushPopActor");
+
+// Push items
+var pushResult = await proxy.InvokeMethodAsync<PushRequest, PushResponse>(
+    "Push",
+    new PushRequest
+    {
+        ItemJson = "{\"task\": \"send_email\"}",
+        Priority = 0
+    }
+);
+
+// Pop items
+var popResult = await proxy.InvokeMethodAsync<PopResponse>("Pop");
+foreach (var itemJson in popResult.ItemsJson)
 {
     // Process item
 }

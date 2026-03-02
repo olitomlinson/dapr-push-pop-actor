@@ -12,6 +12,21 @@ Actor interface definition for creating typed proxies.
 using PushPopActor.Interfaces;
 ```
 
+**Note on Actor Invocation:**
+Examples in this document use the **remoting** (interface-based) approach for clarity:
+```csharp
+var proxy = ActorProxy.Create<IPushPopActor>(actorId, "PushPopActor");
+await proxy.Push(request);
+```
+
+The **nonremoting** (method string) approach is also supported and recommended for API servers:
+```csharp
+var proxy = ActorProxy.Create(actorId, "PushPopActor");
+await proxy.InvokeMethodAsync<PushRequest, PushResponse>("Push", request);
+```
+
+Both approaches work identically with the same actor implementation. See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+
 ## Actor Methods
 
 ### Push

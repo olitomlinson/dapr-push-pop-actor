@@ -3,6 +3,7 @@ using Dapr.Actors;
 using Dapr.Actors.Client;
 using Microsoft.AspNetCore.Mvc;
 using PushPopActor.Interfaces;
+using PushPopActor.ApiServer.Constants;
 
 namespace PushPopActor.ApiServer.Controllers;
 
@@ -35,16 +36,18 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Push request for queue {queueId} with priority {request.Priority}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create<IPushPopActor>(actorId, "PushPopActor");
+            var proxy = ActorProxy.Create(actorId, "PushPopActor");
 
             // Get raw JSON string from JsonElement (no unnecessary deserialization)
             var itemJson = request.Item.GetRawText();
 
-            var result = await proxy.Push(new PushRequest
-            {
-                ItemJson = itemJson,
-                Priority = request.Priority
-            });
+            var result = await proxy.InvokeMethodAsync<PushRequest, PushResponse>(
+                ActorMethodNames.Push,
+                new PushRequest
+                {
+                    ItemJson = itemJson,
+                    Priority = request.Priority
+                });
 
             if (result.Success)
             {
@@ -78,14 +81,16 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Pop request for queue {queueId}, require_ack={require_ack}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create<IPushPopActor>(actorId, "PushPopActor");
+            var proxy = ActorProxy.Create(actorId, "PushPopActor");
 
             if (require_ack)
             {
-                var result = await proxy.PopWithAck(new PopWithAckRequest
-                {
-                    TtlSeconds = ttl_seconds
-                });
+                var result = await proxy.InvokeMethodAsync<PopWithAckRequest, PopWithAckResponse>(
+                    ActorMethodNames.PopWithAck,
+                    new PopWithAckRequest
+                    {
+                        TtlSeconds = ttl_seconds
+                    });
 
                 // If locked by another operation, return 423 Locked
                 if (result.Locked && result.Count == 0)
@@ -114,7 +119,7 @@ public class QueueController : ControllerBase
             }
             else
             {
-                var result = await proxy.Pop();
+                var result = await proxy.InvokeMethodAsync<PopResponse>(ActorMethodNames.Pop);
 
                 // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
                 object? item = null;
@@ -146,12 +151,14 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Acknowledge request for queue {queueId} with lock_id {request.LockId}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create<IPushPopActor>(actorId, "PushPopActor");
+            var proxy = ActorProxy.Create(actorId, "PushPopActor");
 
-            var result = await proxy.Acknowledge(new AcknowledgeRequest
-            {
-                LockId = request.LockId
-            });
+            var result = await proxy.InvokeMethodAsync<AcknowledgeRequest, AcknowledgeResponse>(
+                ActorMethodNames.Acknowledge,
+                new AcknowledgeRequest
+                {
+                    LockId = request.LockId
+                });
 
             // Check for error codes
             if (!result.Success)
