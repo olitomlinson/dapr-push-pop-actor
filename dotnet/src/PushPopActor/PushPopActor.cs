@@ -140,20 +140,20 @@ public class PushPopActor : Actor, IPushPopActor
 
             // Get current tail segment
             string segmentKey = $"queue_{priority}_seg_{tailSegment}";
-            var segment = await StateManager.TryGetStateAsync<List<string>>(segmentKey);
-            var segmentList = segment.HasValue ? segment.Value : new List<string>();
+            var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
+            var segmentQueue = segment.HasValue ? segment.Value : new Queue<string>();
 
             // Check if segment is full BEFORE appending
-            if (segmentList.Count >= MaxSegmentSize)
+            if (segmentQueue.Count >= MaxSegmentSize)
             {
                 // Allocate new segment
                 tailSegment++;
                 segmentKey = $"queue_{priority}_seg_{tailSegment}";
-                segmentList = new List<string>();
+                segmentQueue = new Queue<string>();
             }
 
             // Append item to segment (FIFO)
-            segmentList.Add(request.ItemJson);
+            segmentQueue.Enqueue(request.ItemJson);
 
             // Update metadata (count and pointers)
             count++;
@@ -166,7 +166,7 @@ public class PushPopActor : Actor, IPushPopActor
             metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
 
             // Save segment and metadata
-            await StateManager.SetStateAsync(segmentKey, segmentList);
+            await StateManager.SetStateAsync(segmentKey, segmentQueue);
             await SaveMetadataAsync(metadata);
             await StateManager.SaveStateAsync();
 
@@ -246,7 +246,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                 // Get head segment
                 string segmentKey = $"queue_{priority}_seg_{headSegment}";
-                var segment = await StateManager.TryGetStateAsync<List<string>>(segmentKey);
+                var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
 
                 if (!segment.HasValue || segment.Value.Count == 0)
                 {
@@ -260,12 +260,11 @@ public class PushPopActor : Actor, IPushPopActor
                 }
 
                 // Pop single item from front (FIFO)
-                var segmentList = segment.Value;
-                var itemJson = segmentList[0];
-                segmentList.RemoveAt(0);
+                var segmentQueue = segment.Value;
+                var itemJson = segmentQueue.Dequeue();
 
                 // Handle segment cleanup
-                if (segmentList.Count == 0)
+                if (segmentQueue.Count == 0)
                 {
                     if (headSegment < tailSegment)
                     {
@@ -309,7 +308,7 @@ public class PushPopActor : Actor, IPushPopActor
                 else
                 {
                     // Segment still has items, save it
-                    await StateManager.SetStateAsync(segmentKey, segmentList);
+                    await StateManager.SetStateAsync(segmentKey, segmentQueue);
                     count--;
                     queueMeta = queueMeta with
                     {
@@ -678,7 +677,7 @@ public class PushPopActor : Actor, IPushPopActor
     /// Offload a full segment to the external state store.
     /// Returns updated metadata if successful, null otherwise (logs warning, doesn't throw).
     /// </summary>
-    private async Task<ActorMetadata?> OffloadSegmentAsync(int priority, int segmentNum, List<string> segmentData, ActorMetadata metadata)
+    private async Task<ActorMetadata?> OffloadSegmentAsync(int priority, int segmentNum, Queue<string> segmentData, ActorMetadata metadata)
     {
         try
         {
@@ -733,7 +732,7 @@ public class PushPopActor : Actor, IPushPopActor
             }
 
             // Deserialize from JSON
-            var segmentData = JsonSerializer.Deserialize<List<string>>(result);
+            var segmentData = JsonSerializer.Deserialize<Queue<string>>(result);
 
             if (segmentData == null || segmentData.Count == 0)
             {
@@ -797,7 +796,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                 // Check if segment exists and is full
                 string segmentKey = $"queue_{priority}_seg_{segmentNum}";
-                var segment = await StateManager.TryGetStateAsync<List<string>>(segmentKey);
+                var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
 
                 if (segment.HasValue && segment.Value.Count == MaxSegmentSize)
                 {

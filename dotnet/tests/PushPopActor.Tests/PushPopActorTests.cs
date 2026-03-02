@@ -34,15 +34,15 @@ public class PushPopActorTests
                 return new ConditionalValue<LockState>(false, null);
             });
 
-        // Setup TryGetStateAsync for List<string> (segments)
-        mock.Setup(m => m.TryGetStateAsync<List<string>>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        // Setup TryGetStateAsync for Queue<string> (segments)
+        mock.Setup(m => m.TryGetStateAsync<Queue<string>>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string key, CancellationToken ct) =>
             {
-                if (stateData.ContainsKey(key) && stateData[key] is List<string> list)
+                if (stateData.ContainsKey(key) && stateData[key] is Queue<string> queue)
                 {
-                    return new ConditionalValue<List<string>>(true, list);
+                    return new ConditionalValue<Queue<string>>(true, queue);
                 }
-                return new ConditionalValue<List<string>>(false, null);
+                return new ConditionalValue<Queue<string>>(false, null);
             });
 
         // Setup SetStateAsync
