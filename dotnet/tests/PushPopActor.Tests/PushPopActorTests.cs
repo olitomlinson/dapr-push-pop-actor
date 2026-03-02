@@ -1,6 +1,7 @@
 using Dapr.Actors.Runtime;
 using Moq;
 using Xunit;
+using PushPopActor;
 
 namespace PushPopActor.Tests;
 
@@ -11,23 +12,35 @@ public class PushPopActorTests
         var mock = new Mock<IActorStateManager>();
         var stateData = new Dictionary<string, object>();
 
-        // Setup GetStateAsync
-        mock.Setup(m => m.TryGetStateAsync<Dictionary<string, object>>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        // Setup TryGetStateAsync for ActorMetadata
+        mock.Setup(m => m.TryGetStateAsync<ActorMetadata>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string key, CancellationToken ct) =>
             {
-                if (stateData.ContainsKey(key))
+                if (stateData.ContainsKey(key) && stateData[key] is ActorMetadata metadata)
                 {
-                    return new ConditionalValue<Dictionary<string, object>>(true, (Dictionary<string, object>)stateData[key]);
+                    return new ConditionalValue<ActorMetadata>(true, metadata);
                 }
-                return new ConditionalValue<Dictionary<string, object>>(false, null);
+                return new ConditionalValue<ActorMetadata>(false, null);
             });
 
+        // Setup TryGetStateAsync for LockState
+        mock.Setup(m => m.TryGetStateAsync<LockState>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken ct) =>
+            {
+                if (stateData.ContainsKey(key) && stateData[key] is LockState lockState)
+                {
+                    return new ConditionalValue<LockState>(true, lockState);
+                }
+                return new ConditionalValue<LockState>(false, null);
+            });
+
+        // Setup TryGetStateAsync for List<string> (segments)
         mock.Setup(m => m.TryGetStateAsync<List<string>>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string key, CancellationToken ct) =>
             {
-                if (stateData.ContainsKey(key))
+                if (stateData.ContainsKey(key) && stateData[key] is List<string> list)
                 {
-                    return new ConditionalValue<List<string>>(true, (List<string>)stateData[key]);
+                    return new ConditionalValue<List<string>>(true, list);
                 }
                 return new ConditionalValue<List<string>>(false, null);
             });
@@ -55,7 +68,7 @@ public class PushPopActorTests
         return mock;
     }
 
-    private PushPopActor CreateActor(Mock<IActorStateManager> mockStateManager)
+    private async Task<PushPopActor> CreateActorAsync(Mock<IActorStateManager> mockStateManager)
     {
         var actorHost = ActorHost.CreateForTest<PushPopActor>();
         var actor = new PushPopActor(actorHost);
@@ -63,6 +76,14 @@ public class PushPopActorTests
         // Use reflection to set the StateManager property
         var stateManagerProperty = typeof(Actor).GetProperty("StateManager");
         stateManagerProperty?.SetValue(actor, mockStateManager.Object);
+
+        // Call OnActivateAsync to initialize metadata (simulates Dapr lifecycle)
+        var onActivateMethod = typeof(PushPopActor).GetMethod("OnActivateAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (onActivateMethod != null)
+        {
+            await (Task)onActivateMethod.Invoke(actor, null)!;
+        }
 
         return actor;
     }
@@ -72,7 +93,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var itemJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object> { ["message"] = "test" });
         var request = new Interfaces.PushRequest { ItemJson = itemJson, Priority = 0 };
 
@@ -88,7 +109,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var request = new Interfaces.PushRequest { ItemJson = "", Priority = 0 };
 
         // Act
@@ -103,7 +124,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var itemJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object> { ["message"] = "test" });
         var request = new Interfaces.PushRequest { ItemJson = itemJson, Priority = -1 };
 
@@ -119,7 +140,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
 
         // Act
         var result = await actor.Pop();
@@ -133,7 +154,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var itemJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object> { ["message"] = "test" });
         var pushRequest = new Interfaces.PushRequest { ItemJson = itemJson, Priority = 0 };
 
@@ -152,7 +173,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
 
         // Act - Push 3 items
         await actor.Push(new Interfaces.PushRequest
@@ -191,7 +212,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var itemJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object> { ["message"] = "test" });
         await actor.Push(new Interfaces.PushRequest { ItemJson = itemJson, Priority = 0 });
 
@@ -209,7 +230,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var itemJson = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object> { ["message"] = "test" });
         await actor.Push(new Interfaces.PushRequest { ItemJson = itemJson, Priority = 0 });
 
@@ -229,7 +250,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
 
         // Act
         var result = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = "invalid" });
@@ -244,7 +265,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var original = "{\"key\":\"value\",\"number\":42}";
 
         // Act
@@ -261,7 +282,7 @@ public class PushPopActorTests
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         var request = new Interfaces.PushRequest { ItemJson = "{\"test\":\"data\"}" };
         // Priority not explicitly set - should default to 1
 
@@ -269,15 +290,13 @@ public class PushPopActorTests
         await actor.Push(request);
 
         // Assert - verify it went to priority 1 queue by checking metadata
-        var metadataState = await mockStateManager.Object.TryGetStateAsync<Dictionary<string, object>>("metadata", CancellationToken.None);
+        var metadataState = await mockStateManager.Object.TryGetStateAsync<ActorMetadata>("metadata", CancellationToken.None);
         Assert.True(metadataState.HasValue);
         var metadata = metadataState.Value;
-        Assert.True(metadata.ContainsKey("queues"));
+        Assert.NotNull(metadata);
 
-        var queues = metadata["queues"] as Dictionary<string, object>;
-        Assert.NotNull(queues);
-        Assert.True(queues.ContainsKey("1"), "Item should be in priority 1 queue");
-        Assert.False(queues.ContainsKey("0"), "Item should NOT be in priority 0 queue");
+        Assert.True(metadata.Queues.ContainsKey(1), "Item should be in priority 1 queue");
+        Assert.False(metadata.Queues.ContainsKey(0), "Item should NOT be in priority 0 queue");
     }
 
     [Fact]
@@ -285,7 +304,7 @@ public class PushPopActorTests
     {
         // Arrange - push items at different priorities
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
 
         await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 2 });
         await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":2}", Priority = 1 });
@@ -318,7 +337,7 @@ public class PushPopActorTests
     {
         // Arrange - push single item
         var mockStateManager = CreateMockStateManager();
-        var actor = CreateActor(mockStateManager);
+        var actor = await CreateActorAsync(mockStateManager);
         await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
 
         // Act - PopWithAck should commit both pop and lock atomically

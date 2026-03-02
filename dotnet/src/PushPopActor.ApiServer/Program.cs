@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapr.Actors;
 using Dapr.Actors.Client;
 using Dapr.Actors.Runtime;
@@ -24,6 +26,12 @@ if (registerActors)
 
         // Configure actor runtime settings
         options.ActorIdleTimeout = TimeSpan.FromSeconds(60);
+        options.JsonSerializerOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase, // Use camelCase instead of PascalCase
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull, // Skip null properties
+            WriteIndented = false // Set to true only for debugging
+        };
     });
 }
 // No else needed - Dapr Client (from AddDapr) is sufficient for actor invocation

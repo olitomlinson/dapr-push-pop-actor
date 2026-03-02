@@ -10,6 +10,49 @@ using PushPopActor.Interfaces;
 namespace PushPopActor;
 
 /// <summary>
+/// Actor metadata containing configuration and queue state.
+/// </summary>
+public record ActorMetadata
+{
+    public MetadataConfig Config { get; init; } = new();
+    public Dictionary<int, QueueMetadata> Queues { get; init; } = new();
+}
+
+/// <summary>
+/// Configuration settings for the actor.
+/// </summary>
+public record MetadataConfig
+{
+    public int SegmentSize { get; init; } = 100;
+    public int BufferSegments { get; init; } = 1;
+}
+
+/// <summary>
+/// Metadata for a single priority queue.
+/// </summary>
+public record QueueMetadata
+{
+    public int HeadSegment { get; init; }
+    public int TailSegment { get; init; }
+    public int Count { get; init; }
+    public int? HeadOffloadedSegment { get; init; }
+    public int? TailOffloadedSegment { get; init; }
+}
+
+/// <summary>
+/// Lock state for PopWithAck operations.
+/// </summary>
+public record LockState
+{
+    public required string LockId { get; init; }
+    public required double CreatedAt { get; init; }
+    public required double ExpiresAt { get; init; }
+    public required List<string> ItemsJson { get; init; }
+    public required int Count { get; init; }
+    public required int Priority { get; init; }
+}
+
+/// <summary>
 /// PushPopActor - A FIFO queue-based Dapr actor with priority support.
 /// Implements segmented storage (100 items per segment) for scalable queue operations.
 /// </summary>
@@ -23,6 +66,34 @@ public class PushPopActor : Actor, IPushPopActor
 
     public PushPopActor(ActorHost host) : base(host)
     {
+    }
+
+    /// <summary>
+    /// Called when the actor is activated. Initializes metadata structure if it doesn't exist.
+    /// </summary>
+    protected override async Task OnActivateAsync()
+    {
+        // Initialize metadata structure if it doesn't exist
+        var metadataExists = await StateManager.TryGetStateAsync<ActorMetadata>("metadata");
+        if (!metadataExists.HasValue)
+        {
+            var initialMetadata = new ActorMetadata
+            {
+                Config = new MetadataConfig
+                {
+                    SegmentSize = MaxSegmentSize,
+                    BufferSegments = 1
+                },
+                Queues = new Dictionary<int, QueueMetadata>()
+            };
+            await StateManager.SetStateAsync("metadata", initialMetadata);
+            await StateManager.SaveStateAsync();
+            Logger.LogDebug("Actor activated and metadata initialized");
+        }
+        else
+        {
+            Logger.LogDebug("Actor activated with existing metadata");
+        }
     }
 
     /// <summary>
@@ -51,53 +122,21 @@ public class PushPopActor : Actor, IPushPopActor
             // Get metadata
             var metadata = await GetMetadataAsync();
 
-            // Ensure priority queue exists in metadata
-            if (!metadata.ContainsKey("queues"))
+            // Ensure priority queue exists
+            if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
             {
-                metadata["queues"] = new Dictionary<string, object>();
-            }
-
-            // Handle JsonElement for queues dictionary
-            var queuesObj = metadata["queues"];
-            Dictionary<string, object>? queues = null;
-            if (queuesObj is JsonElement queuesJsonElement)
-            {
-                queues = JsonSerializer.Deserialize<Dictionary<string, object>>(queuesJsonElement.GetRawText());
-            }
-            else if (queuesObj is Dictionary<string, object> dict)
-            {
-                queues = dict;
-            }
-            queues ??= new Dictionary<string, object>();
-
-            string priorityKey = priority.ToString();
-            if (!queues.ContainsKey(priorityKey))
-            {
-                queues[priorityKey] = new Dictionary<string, object>
+                queueMeta = new QueueMetadata
                 {
-                    ["head_segment"] = 0,
-                    ["tail_segment"] = 0,
-                    ["count"] = 0
+                    HeadSegment = 0,
+                    TailSegment = 0,
+                    Count = 0
                 };
+                metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
             }
-            metadata["queues"] = queues;
 
-            // Handle JsonElement for queue metadata
-            var queueMetaObj = queues[priorityKey];
-            Dictionary<string, object>? queueMeta = null;
-            if (queueMetaObj is JsonElement queueJsonElement)
-            {
-                queueMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(queueJsonElement.GetRawText());
-            }
-            else if (queueMetaObj is Dictionary<string, object> dict)
-            {
-                queueMeta = dict;
-            }
-            queueMeta ??= new Dictionary<string, object>();
-
-            int tailSegment = GetIntValue(queueMeta["tail_segment"]);
-            int headSegment = GetIntValue(queueMeta["head_segment"]);
-            int count = GetIntValue(queueMeta["count"]);
+            int tailSegment = queueMeta.TailSegment;
+            int headSegment = queueMeta.HeadSegment;
+            int count = queueMeta.Count;
 
             // Get current tail segment
             string segmentKey = $"queue_{priority}_seg_{tailSegment}";
@@ -118,15 +157,16 @@ public class PushPopActor : Actor, IPushPopActor
 
             // Update metadata (count and pointers)
             count++;
-            queueMeta["head_segment"] = headSegment;
-            queueMeta["tail_segment"] = tailSegment;
-            queueMeta["count"] = count;
-            queues[priorityKey] = queueMeta;
-            metadata["queues"] = queues;
+            queueMeta = queueMeta with
+            {
+                HeadSegment = headSegment,
+                TailSegment = tailSegment,
+                Count = count
+            };
+            metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
 
             // Save segment and metadata
             await StateManager.SetStateAsync(segmentKey, segmentList);
-
             await SaveMetadataAsync(metadata);
             await StateManager.SaveStateAsync();
 
@@ -163,14 +203,13 @@ public class PushPopActor : Actor, IPushPopActor
         try
         {
             // Check if queue is locked
-            var lockState = await StateManager.TryGetStateAsync<Dictionary<string, object>>("_active_lock");
+            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
             if (lockState.HasValue)
             {
                 var lockData = lockState.Value;
-                double expiresAt = Convert.ToDouble(lockData["expires_at"]);
                 double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-                if (now < expiresAt)
+                if (now < lockData.ExpiresAt)
                 {
                     Logger.LogDebug("Queue is locked, cannot pop");
                     return (new PopResponse { ItemsJson = new List<string>() }, -1);
@@ -184,61 +223,26 @@ public class PushPopActor : Actor, IPushPopActor
 
             var metadata = await GetMetadataAsync();
 
-            if (!metadata.ContainsKey("queues"))
-            {
-                return (new PopResponse { ItemsJson = new List<string>() }, -1);
-            }
-
-            // Handle both Dictionary<string, object> and JsonElement for queues
-            var queuesObj = metadata["queues"];
-            Dictionary<string, object>? queues = null;
-
-            if (queuesObj is JsonElement jsonElement)
-            {
-                queues = JsonSerializer.Deserialize<Dictionary<string, object>>(jsonElement.GetRawText());
-            }
-            else if (queuesObj is Dictionary<string, object> dict)
-            {
-                queues = dict;
-            }
-
-            if (queues == null || queues.Count == 0)
+            if (metadata.Queues.Count == 0)
             {
                 return (new PopResponse { ItemsJson = new List<string>() }, -1);
             }
 
             // Find lowest priority with items
-            var sortedPriorities = queues.Keys
-                .Select(k => int.Parse(k))
-                .OrderBy(p => p)
-                .ToList();
+            var sortedPriorities = metadata.Queues.Keys.OrderBy(p => p).ToList();
 
             foreach (var priority in sortedPriorities)
             {
                 // Load any offloaded segments that are needed
                 await CheckAndLoadSegmentsAsync(priority, metadata);
 
-                // Handle both Dictionary<string, object> and JsonElement
-                var queueMetaObj = queues[priority.ToString()];
-                Dictionary<string, object>? queueMeta = null;
+                var queueMeta = metadata.Queues[priority];
 
-                if (queueMetaObj is JsonElement queueJsonElement)
-                {
-                    queueMeta = JsonSerializer.Deserialize<Dictionary<string, object>>(queueJsonElement.GetRawText());
-                }
-                else if (queueMetaObj is Dictionary<string, object> dict)
-                {
-                    queueMeta = dict;
-                }
+                if (queueMeta.Count == 0) continue;
 
-                if (queueMeta == null) continue;
-
-                // Handle JsonElement for numeric values
-                int count = GetIntValue(queueMeta["count"]);
-                if (count == 0) continue;
-
-                int headSegment = GetIntValue(queueMeta["head_segment"]);
-                int tailSegment = GetIntValue(queueMeta["tail_segment"]);
+                int headSegment = queueMeta.HeadSegment;
+                int tailSegment = queueMeta.TailSegment;
+                int count = queueMeta.Count;
 
                 // Get head segment
                 string segmentKey = $"queue_{priority}_seg_{headSegment}";
@@ -248,8 +252,9 @@ public class PushPopActor : Actor, IPushPopActor
                 {
                     // Defensive: fix count desync
                     Logger.LogWarning($"Count desync detected for priority {priority}, removing queue metadata");
-                    queues.Remove(priority.ToString());
-                    metadata["queues"] = queues;
+                    var updatedQueues = new Dictionary<int, QueueMetadata>(metadata.Queues);
+                    updatedQueues.Remove(priority);
+                    metadata = metadata with { Queues = updatedQueues };
                     await SaveMetadataAsync(metadata);
                     continue;
                 }
@@ -270,11 +275,13 @@ public class PushPopActor : Actor, IPushPopActor
                         headSegment++;
                         // Update metadata pointers
                         count--;
-                        queueMeta["head_segment"] = headSegment;
-                        queueMeta["tail_segment"] = tailSegment;
-                        queueMeta["count"] = count;
-                        queues[priority.ToString()] = queueMeta;
-                        metadata["queues"] = queues;
+                        queueMeta = queueMeta with
+                        {
+                            HeadSegment = headSegment,
+                            TailSegment = tailSegment,
+                            Count = count
+                        };
+                        metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
                         await SaveMetadataAsync(metadata);
 
                         Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
@@ -288,8 +295,9 @@ public class PushPopActor : Actor, IPushPopActor
                         // Delete the segment from state
                         await StateManager.RemoveStateAsync(segmentKey);
                         // Delete queue metadata
-                        queues.Remove(priority.ToString());
-                        metadata["queues"] = queues;
+                        var updatedQueues = new Dictionary<int, QueueMetadata>(metadata.Queues);
+                        updatedQueues.Remove(priority);
+                        metadata = metadata with { Queues = updatedQueues };
                         await SaveMetadataAsync(metadata);
 
                         Logger.LogDebug($"Popped last item from priority {priority}, queue now empty");
@@ -303,11 +311,13 @@ public class PushPopActor : Actor, IPushPopActor
                     // Segment still has items, save it
                     await StateManager.SetStateAsync(segmentKey, segmentList);
                     count--;
-                    queueMeta["head_segment"] = headSegment;
-                    queueMeta["tail_segment"] = tailSegment;
-                    queueMeta["count"] = count;
-                    queues[priority.ToString()] = queueMeta;
-                    metadata["queues"] = queues;
+                    queueMeta = queueMeta with
+                    {
+                        HeadSegment = headSegment,
+                        TailSegment = tailSegment,
+                        Count = count
+                    };
+                    metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
                     await SaveMetadataAsync(metadata);
 
                     Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
@@ -328,65 +338,31 @@ public class PushPopActor : Actor, IPushPopActor
 
     // Helper methods follow in next section...
 
-    private async Task<Dictionary<string, object>> GetMetadataAsync()
+    private async Task<ActorMetadata> GetMetadataAsync()
     {
-        var result = await StateManager.TryGetStateAsync<Dictionary<string, object>>("metadata");
-        if (result.HasValue)
-        {
-            return result.Value;
-        }
-
-        return new Dictionary<string, object>
-        {
-            ["config"] = new Dictionary<string, object>
-            {
-                ["segment_size"] = MaxSegmentSize,
-                ["buffer_segments"] = 1
-            },
-            ["queues"] = new Dictionary<string, object>()
-        };
+        var result = await StateManager.TryGetStateAsync<ActorMetadata>("metadata");
+        // Metadata is guaranteed to exist - initialized in OnActivateAsync before any methods are called
+        return result.Value;
     }
 
-    private async Task SaveMetadataAsync(Dictionary<string, object> metadata)
+    private async Task SaveMetadataAsync(ActorMetadata metadata)
     {
         await StateManager.SetStateAsync("metadata", metadata);
     }
 
-    private async Task HandleExpiredLockAsync(Dictionary<string, object> lockData)
+    private async Task HandleExpiredLockAsync(LockState lockData)
     {
         // Return items to queue and clear lock
         Logger.LogDebug("Lock expired, returning items to queue");
 
-        // Restore original priority (or default to 1 for old locks without priority tracking)
-        int originalPriority = lockData.ContainsKey("priority")
-            ? Convert.ToInt32(lockData["priority"])
-            : 1;  // Fallback to new default for old locks created before priority tracking
-
-        if (lockData.ContainsKey("items_json"))
+        // Restore items to original priority
+        foreach (var jsonString in lockData.ItemsJson)
         {
-            // Try both List<string> and List<object> for compatibility
-            List<string>? itemsJson = null;
-
-            if (lockData["items_json"] is List<string> stringList)
+            await Push(new PushRequest
             {
-                itemsJson = stringList;
-            }
-            else if (lockData["items_json"] is List<object> objList)
-            {
-                itemsJson = objList.Select(item => item.ToString()).Where(s => s != null).ToList()!;
-            }
-
-            if (itemsJson != null)
-            {
-                foreach (var jsonString in itemsJson)
-                {
-                    await Push(new PushRequest
-                    {
-                        ItemJson = jsonString,
-                        Priority = originalPriority  // Restore original priority
-                    });
-                }
-            }
+                ItemJson = jsonString,
+                Priority = lockData.Priority
+            });
         }
 
         await StateManager.RemoveStateAsync("_active_lock");
@@ -404,21 +380,20 @@ public class PushPopActor : Actor, IPushPopActor
             int ttlSeconds = Math.Max(MinLockTtlSeconds, Math.Min(MaxLockTtlSeconds, request.TtlSeconds));
 
             // Check if already locked
-            var lockState = await StateManager.TryGetStateAsync<Dictionary<string, object>>("_active_lock");
+            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
             if (lockState.HasValue)
             {
                 var existingLock = lockState.Value;
-                double expiresAt = Convert.ToDouble(existingLock["expires_at"]);
                 double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-                if (now < expiresAt)
+                if (now < existingLock.ExpiresAt)
                 {
                     return new PopWithAckResponse
                     {
                         ItemsJson = new List<string>(),
                         Count = 0,
                         Locked = true,
-                        LockExpiresAt = expiresAt,
+                        LockExpiresAt = existingLock.ExpiresAt,
                         Message = "Queue is locked by another operation"
                     };
                 }
@@ -448,14 +423,14 @@ public class PushPopActor : Actor, IPushPopActor
             double nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             double lockExpiresAt = nowUnix + ttlSeconds;
 
-            var lockData = new Dictionary<string, object>
+            var lockData = new LockState
             {
-                ["lock_id"] = lockId,
-                ["created_at"] = nowUnix,
-                ["expires_at"] = lockExpiresAt,
-                ["items_json"] = popResult.ItemsJson,
-                ["count"] = popResult.ItemsJson.Count,
-                ["priority"] = poppedPriority  // Track original priority for restoration
+                LockId = lockId,
+                CreatedAt = nowUnix,
+                ExpiresAt = lockExpiresAt,
+                ItemsJson = popResult.ItemsJson,
+                Count = popResult.ItemsJson.Count,
+                Priority = poppedPriority
             };
 
             await StateManager.SetStateAsync("_active_lock", lockData);
@@ -507,7 +482,7 @@ public class PushPopActor : Actor, IPushPopActor
             string lockId = request.LockId;
 
             // Get lock state
-            var lockState = await StateManager.TryGetStateAsync<Dictionary<string, object>>("_active_lock");
+            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
             if (!lockState.HasValue)
             {
                 return new AcknowledgeResponse
@@ -519,10 +494,9 @@ public class PushPopActor : Actor, IPushPopActor
             }
 
             var lockData = lockState.Value;
-            string storedLockId = lockData["lock_id"] as string ?? string.Empty;
 
             // Validate lock ID matches
-            if (storedLockId != lockId)
+            if (lockData.LockId != lockId)
             {
                 return new AcknowledgeResponse
                 {
@@ -533,10 +507,9 @@ public class PushPopActor : Actor, IPushPopActor
             }
 
             // Check if lock expired
-            double expiresAt = Convert.ToDouble(lockData["expires_at"]);
             double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-            if (now >= expiresAt)
+            if (now >= lockData.ExpiresAt)
             {
                 // Lock expired - return items to queue
                 await HandleExpiredLockAsync(lockData);
@@ -550,18 +523,16 @@ public class PushPopActor : Actor, IPushPopActor
             }
 
             // Acknowledge - items already removed from queue during PopWithAck
-            int itemsCount = Convert.ToInt32(lockData["count"]);
-
             await StateManager.RemoveStateAsync("_active_lock");
             await StateManager.SaveStateAsync();
 
-            Logger.LogDebug($"Acknowledged lock {lockId}, {itemsCount} items processed");
+            Logger.LogDebug($"Acknowledged lock {lockId}, {lockData.Count} items processed");
 
             return new AcknowledgeResponse
             {
                 Success = true,
-                Message = $"Successfully acknowledged {itemsCount} item(s)",
-                ItemsAcknowledged = itemsCount
+                Message = $"Successfully acknowledged {lockData.Count} item(s)",
+                ItemsAcknowledged = lockData.Count
             };
         }
         catch (Exception ex)
@@ -599,44 +570,11 @@ public class PushPopActor : Actor, IPushPopActor
     }
 
     /// <summary>
-    /// Helper to convert object to int, handling both regular types and JsonElement.
-    /// </summary>
-    private static int GetIntValue(object value)
-    {
-        if (value is JsonElement jsonElement)
-        {
-            return jsonElement.GetInt32();
-        }
-        return Convert.ToInt32(value);
-    }
-
-    /// <summary>
-    /// Helper to convert object to Dictionary, handling JsonElement deserialization.
-    /// </summary>
-    private static Dictionary<string, object> GetDictValue(object obj)
-    {
-        if (obj is JsonElement jsonElement)
-        {
-            return JsonSerializer.Deserialize<Dictionary<string, object>>(jsonElement.GetRawText())
-                ?? new Dictionary<string, object>();
-        }
-        return obj as Dictionary<string, object> ?? new Dictionary<string, object>();
-    }
-
-    /// <summary>
     /// Get configured buffer_segments value (default 1).
     /// </summary>
-    private int GetBufferSegments(Dictionary<string, object> metadata)
+    private int GetBufferSegments(ActorMetadata metadata)
     {
-        if (metadata.ContainsKey("config"))
-        {
-            var config = GetDictValue(metadata["config"]);
-            if (config.ContainsKey("buffer_segments"))
-            {
-                return GetIntValue(config["buffer_segments"]);
-            }
-        }
-        return 1; // Default buffer_segments
+        return metadata.Config.BufferSegments;
     }
 
     /// <summary>
@@ -652,91 +590,65 @@ public class PushPopActor : Actor, IPushPopActor
     /// Get offloaded segment range for a priority queue.
     /// Returns (head, tail) or (null, null) if no offloaded segments exist.
     /// </summary>
-    private (int? head, int? tail) GetOffloadedRange(Dictionary<string, object> metadata, int priority)
+    private (int? head, int? tail) GetOffloadedRange(ActorMetadata metadata, int priority)
     {
-        if (!metadata.ContainsKey("queues"))
+        if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
             return (null, null);
 
-        var queues = GetDictValue(metadata["queues"]);
-        string priorityKey = priority.ToString();
-
-        if (!queues.ContainsKey(priorityKey))
-            return (null, null);
-
-        var queueMeta = GetDictValue(queues[priorityKey]);
-
-        if (queueMeta.ContainsKey("head_offloaded_segment") && queueMeta.ContainsKey("tail_offloaded_segment"))
+        if (queueMeta.HeadOffloadedSegment.HasValue && queueMeta.TailOffloadedSegment.HasValue)
         {
-            int head = GetIntValue(queueMeta["head_offloaded_segment"]);
-            int tail = GetIntValue(queueMeta["tail_offloaded_segment"]);
-            return (head, tail);
+            return (queueMeta.HeadOffloadedSegment.Value, queueMeta.TailOffloadedSegment.Value);
         }
 
         return (null, null);
     }
 
     /// <summary>
-    /// Add a segment to the offloaded range (extends tail).
+    /// Add a segment to the offloaded range (extends tail). Returns updated metadata.
     /// </summary>
-    private void AddOffloadedSegment(Dictionary<string, object> metadata, int priority, int segmentNum)
+    private ActorMetadata AddOffloadedSegment(ActorMetadata metadata, int priority, int segmentNum)
     {
-        if (!metadata.ContainsKey("queues"))
+        if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
         {
-            metadata["queues"] = new Dictionary<string, object>();
-        }
-
-        var queues = GetDictValue(metadata["queues"]);
-        string priorityKey = priority.ToString();
-
-        if (!queues.ContainsKey(priorityKey))
-        {
-            queues[priorityKey] = new Dictionary<string, object>
+            queueMeta = new QueueMetadata
             {
-                ["head_segment"] = 0,
-                ["tail_segment"] = 0,
-                ["count"] = 0
+                HeadSegment = 0,
+                TailSegment = 0,
+                Count = 0
             };
         }
 
-        var queueMeta = GetDictValue(queues[priorityKey]);
-
         // If no offloaded range exists, initialize both head and tail
-        if (!queueMeta.ContainsKey("head_offloaded_segment"))
+        if (!queueMeta.HeadOffloadedSegment.HasValue)
         {
-            queueMeta["head_offloaded_segment"] = segmentNum;
-            queueMeta["tail_offloaded_segment"] = segmentNum;
+            queueMeta = queueMeta with
+            {
+                HeadOffloadedSegment = segmentNum,
+                TailOffloadedSegment = segmentNum
+            };
         }
         else
         {
             // Extend tail (segments added sequentially)
-            queueMeta["tail_offloaded_segment"] = segmentNum;
+            queueMeta = queueMeta with { TailOffloadedSegment = segmentNum };
         }
 
-        queues[priorityKey] = queueMeta;
-        metadata["queues"] = queues;
+        return metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
     }
 
     /// <summary>
-    /// Remove a segment from the offloaded range (shrinks from head).
+    /// Remove a segment from the offloaded range (shrinks from head). Returns updated metadata.
     /// </summary>
-    private void RemoveOffloadedSegment(Dictionary<string, object> metadata, int priority, int segmentNum)
+    private ActorMetadata RemoveOffloadedSegment(ActorMetadata metadata, int priority, int segmentNum)
     {
-        if (!metadata.ContainsKey("queues"))
-            return;
+        if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
+            return metadata;
 
-        var queues = GetDictValue(metadata["queues"]);
-        string priorityKey = priority.ToString();
+        if (!queueMeta.HeadOffloadedSegment.HasValue || !queueMeta.TailOffloadedSegment.HasValue)
+            return metadata;
 
-        if (!queues.ContainsKey(priorityKey))
-            return;
-
-        var queueMeta = GetDictValue(queues[priorityKey]);
-
-        if (!queueMeta.ContainsKey("head_offloaded_segment") || !queueMeta.ContainsKey("tail_offloaded_segment"))
-            return;
-
-        int head = GetIntValue(queueMeta["head_offloaded_segment"]);
-        int tail = GetIntValue(queueMeta["tail_offloaded_segment"]);
+        int head = queueMeta.HeadOffloadedSegment.Value;
+        int tail = queueMeta.TailOffloadedSegment.Value;
 
         // Should only remove from head (FIFO)
         if (segmentNum == head)
@@ -744,25 +656,29 @@ public class PushPopActor : Actor, IPushPopActor
             if (head == tail)
             {
                 // Last segment in range, clear both
-                queueMeta.Remove("head_offloaded_segment");
-                queueMeta.Remove("tail_offloaded_segment");
+                queueMeta = queueMeta with
+                {
+                    HeadOffloadedSegment = null,
+                    TailOffloadedSegment = null
+                };
             }
             else
             {
                 // Move head forward
-                queueMeta["head_offloaded_segment"] = head + 1;
+                queueMeta = queueMeta with { HeadOffloadedSegment = head + 1 };
             }
 
-            queues[priorityKey] = queueMeta;
-            metadata["queues"] = queues;
+            return metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
         }
+
+        return metadata;
     }
 
     /// <summary>
     /// Offload a full segment to the external state store.
-    /// Returns true if successful, false otherwise (logs warning, doesn't throw).
+    /// Returns updated metadata if successful, null otherwise (logs warning, doesn't throw).
     /// </summary>
-    private async Task<bool> OffloadSegmentAsync(int priority, int segmentNum, List<string> segmentData, Dictionary<string, object> metadata)
+    private async Task<ActorMetadata?> OffloadSegmentAsync(int priority, int segmentNum, List<string> segmentData, ActorMetadata metadata)
     {
         try
         {
@@ -776,31 +692,31 @@ public class PushPopActor : Actor, IPushPopActor
             await client.SaveStateAsync("statestore", offloadKey, segmentJson);
 
             // Add to offloaded range in metadata
-            AddOffloadedSegment(metadata, priority, segmentNum);
+            var updatedMetadata = AddOffloadedSegment(metadata, priority, segmentNum);
 
             // Delete from actor state manager
             string segmentKey = $"queue_{priority}_seg_{segmentNum}";
             await StateManager.RemoveStateAsync(segmentKey);
 
             // Save metadata
-            await SaveMetadataAsync(metadata);
+            await SaveMetadataAsync(updatedMetadata);
             await StateManager.SaveStateAsync();
 
             Logger.LogDebug($"Offloaded segment {segmentNum} for priority {priority} (actor {Id.GetId()})");
-            return true;
+            return updatedMetadata;
         }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, $"Failed to offload segment {segmentNum} for priority {priority} (actor {Id.GetId()})");
-            return false;
+            return null;
         }
     }
 
     /// <summary>
     /// Load an offloaded segment from state store back into actor state.
-    /// Returns segment data if successful, null otherwise (logs error).
+    /// Returns updated metadata if successful, null otherwise (logs error).
     /// </summary>
-    private async Task<List<string>?> LoadOffloadedSegmentAsync(int priority, int segmentNum, Dictionary<string, object> metadata)
+    private async Task<ActorMetadata?> LoadOffloadedSegmentAsync(int priority, int segmentNum, ActorMetadata metadata)
     {
         try
         {
@@ -830,17 +746,17 @@ public class PushPopActor : Actor, IPushPopActor
             await StateManager.SetStateAsync(segmentKey, segmentData);
 
             // Remove from offloaded range
-            RemoveOffloadedSegment(metadata, priority, segmentNum);
+            var updatedMetadata = RemoveOffloadedSegment(metadata, priority, segmentNum);
 
             // Delete from state store
             await client.DeleteStateAsync("statestore", offloadKey);
 
             // Save metadata
-            await SaveMetadataAsync(metadata);
+            await SaveMetadataAsync(updatedMetadata);
             await StateManager.SaveStateAsync();
 
             Logger.LogDebug($"Loaded segment {segmentNum} for priority {priority} from state store (actor {Id.GetId()})");
-            return segmentData;
+            return updatedMetadata;
         }
         catch (Exception ex)
         {
@@ -853,23 +769,15 @@ public class PushPopActor : Actor, IPushPopActor
     /// Check and offload eligible segments for a priority queue.
     /// Called after Push. Non-blocking - failures are logged but don't throw.
     /// </summary>
-    private async Task CheckAndOffloadSegmentsAsync(int priority, Dictionary<string, object> metadata)
+    private async Task CheckAndOffloadSegmentsAsync(int priority, ActorMetadata metadata)
     {
         try
         {
-            if (!metadata.ContainsKey("queues"))
+            if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
                 return;
 
-            var queues = GetDictValue(metadata["queues"]);
-            string priorityKey = priority.ToString();
-
-            if (!queues.ContainsKey(priorityKey))
-                return;
-
-            var queueMeta = GetDictValue(queues[priorityKey]);
-
-            int headSegment = GetIntValue(queueMeta["head_segment"]);
-            int tailSegment = GetIntValue(queueMeta["tail_segment"]);
+            int headSegment = queueMeta.HeadSegment;
+            int tailSegment = queueMeta.TailSegment;
             int bufferSegments = GetBufferSegments(metadata);
             var offloadedRange = GetOffloadedRange(metadata, priority);
 
@@ -894,7 +802,11 @@ public class PushPopActor : Actor, IPushPopActor
                 if (segment.HasValue && segment.Value.Count == MaxSegmentSize)
                 {
                     // Offload this segment (non-blocking on failure)
-                    await OffloadSegmentAsync(priority, segmentNum, segment.Value, metadata);
+                    var updatedMetadata = await OffloadSegmentAsync(priority, segmentNum, segment.Value, metadata);
+                    if (updatedMetadata != null)
+                    {
+                        metadata = updatedMetadata;
+                    }
                 }
             }
         }
@@ -908,35 +820,31 @@ public class PushPopActor : Actor, IPushPopActor
     /// Check and load offloaded segments that are needed for consumption.
     /// Called before Pop. Blocking - throws exceptions on failure to prevent data corruption.
     /// </summary>
-    private async Task CheckAndLoadSegmentsAsync(int priority, Dictionary<string, object> metadata)
+    private async Task CheckAndLoadSegmentsAsync(int priority, ActorMetadata metadata)
     {
-        var offloadedRange = GetOffloadedRange(metadata, priority);
-        if (offloadedRange.head == null || offloadedRange.tail == null)
+        var (head, tail) = GetOffloadedRange(metadata, priority);
+        if (head == null || tail == null)
             return;
 
-        if (!metadata.ContainsKey("queues"))
+        if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
             return;
 
-        var queues = GetDictValue(metadata["queues"]);
-        string priorityKey = priority.ToString();
-
-        if (!queues.ContainsKey(priorityKey))
-            return;
-
-        var queueMeta = GetDictValue(queues[priorityKey]);
-
-        int headSegment = GetIntValue(queueMeta["head_segment"]);
+        int headSegment = queueMeta.HeadSegment;
         int bufferSegments = GetBufferSegments(metadata);
 
         // Calculate which segments should be loaded
         int maxOffloaded = headSegment + bufferSegments;
 
         // Load segments that are within the buffer zone (from head of offloaded range)
-        for (int segmentNum = offloadedRange.head.Value; segmentNum <= offloadedRange.tail.Value; segmentNum++)
+        for (int segmentNum = head.Value; segmentNum <= tail.Value; segmentNum++)
         {
             if (segmentNum <= maxOffloaded)
             {
-                await LoadOffloadedSegmentAsync(priority, segmentNum, metadata);
+                var updatedMetadata = await LoadOffloadedSegmentAsync(priority, segmentNum, metadata);
+                if (updatedMetadata != null)
+                {
+                    metadata = updatedMetadata;
+                }
             }
             else
             {
