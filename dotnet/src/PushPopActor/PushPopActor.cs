@@ -130,7 +130,7 @@ public class PushPopActor : Actor, IPushPopActor
             await SaveMetadataAsync(metadata);
             await StateManager.SaveStateAsync();
 
-            Logger.LogInformation($"Pushed item to queue at priority {priority}, count now {count}");
+            Logger.LogDebug($"Pushed item to queue at priority {priority}, count now {count}");
 
             // Check and offload segments if eligible
             await CheckAndOffloadSegmentsAsync(priority, metadata);
@@ -172,7 +172,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                 if (now < expiresAt)
                 {
-                    Logger.LogInformation("Queue is locked, cannot pop");
+                    Logger.LogDebug("Queue is locked, cannot pop");
                     return (new PopResponse { ItemsJson = new List<string>() }, -1);
                 }
                 else
@@ -277,7 +277,7 @@ public class PushPopActor : Actor, IPushPopActor
                         metadata["queues"] = queues;
                         await SaveMetadataAsync(metadata);
 
-                        Logger.LogInformation($"Popped item from priority {priority}, count now {count}");
+                        Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                         // Return item JSON string directly with priority
                         return (new PopResponse { ItemsJson = new List<string> { itemJson } }, priority);
@@ -292,7 +292,7 @@ public class PushPopActor : Actor, IPushPopActor
                         metadata["queues"] = queues;
                         await SaveMetadataAsync(metadata);
 
-                        Logger.LogInformation($"Popped last item from priority {priority}, queue now empty");
+                        Logger.LogDebug($"Popped last item from priority {priority}, queue now empty");
 
                         // Return item JSON string directly with priority
                         return (new PopResponse { ItemsJson = new List<string> { itemJson } }, priority);
@@ -310,7 +310,7 @@ public class PushPopActor : Actor, IPushPopActor
                     metadata["queues"] = queues;
                     await SaveMetadataAsync(metadata);
 
-                    Logger.LogInformation($"Popped item from priority {priority}, count now {count}");
+                    Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                     // Return item JSON string directly with priority
                     return (new PopResponse { ItemsJson = new List<string> { itemJson } }, priority);
@@ -355,7 +355,7 @@ public class PushPopActor : Actor, IPushPopActor
     private async Task HandleExpiredLockAsync(Dictionary<string, object> lockData)
     {
         // Return items to queue and clear lock
-        Logger.LogInformation("Lock expired, returning items to queue");
+        Logger.LogDebug("Lock expired, returning items to queue");
 
         // Restore original priority (or default to 1 for old locks without priority tracking)
         int originalPriority = lockData.ContainsKey("priority")
@@ -461,7 +461,7 @@ public class PushPopActor : Actor, IPushPopActor
             await StateManager.SetStateAsync("_active_lock", lockData);
             await StateManager.SaveStateAsync();
 
-            Logger.LogInformation($"Created lock {lockId} with TTL {ttlSeconds}s, expires at {lockExpiresAt}");
+            Logger.LogDebug($"Created lock {lockId} with TTL {ttlSeconds}s, expires at {lockExpiresAt}");
 
             return new PopWithAckResponse
             {
@@ -555,7 +555,7 @@ public class PushPopActor : Actor, IPushPopActor
             await StateManager.RemoveStateAsync("_active_lock");
             await StateManager.SaveStateAsync();
 
-            Logger.LogInformation($"Acknowledged lock {lockId}, {itemsCount} items processed");
+            Logger.LogDebug($"Acknowledged lock {lockId}, {itemsCount} items processed");
 
             return new AcknowledgeResponse
             {
