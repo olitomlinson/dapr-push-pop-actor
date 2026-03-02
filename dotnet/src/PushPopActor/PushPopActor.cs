@@ -46,19 +46,6 @@ public class PushPopActor : Actor, IPushPopActor
                 return new PushResponse { Success = false };
             }
 
-            // Parse item JSON to validate and convert to dictionary
-            Dictionary<string, object> itemDict;
-            try
-            {
-                itemDict = JsonSerializer.Deserialize<Dictionary<string, object>>(request.ItemJson)
-                    ?? new Dictionary<string, object>();
-            }
-            catch (JsonException ex)
-            {
-                Logger.LogWarning($"Push failed: invalid JSON - {ex.Message}");
-                return new PushResponse { Success = false };
-            }
-
             int priority = request.Priority;
 
             // Get metadata
@@ -114,8 +101,8 @@ public class PushPopActor : Actor, IPushPopActor
 
             // Get current tail segment
             string segmentKey = $"queue_{priority}_seg_{tailSegment}";
-            var segment = await StateManager.TryGetStateAsync<List<Dictionary<string, object>>>(segmentKey);
-            var segmentList = segment.HasValue ? segment.Value : new List<Dictionary<string, object>>();
+            var segment = await StateManager.TryGetStateAsync<List<string>>(segmentKey);
+            var segmentList = segment.HasValue ? segment.Value : new List<string>();
 
             // Check if segment is full BEFORE appending (matching Python)
             if (segmentList.Count >= MaxSegmentSize)
@@ -123,11 +110,11 @@ public class PushPopActor : Actor, IPushPopActor
                 // Allocate new segment
                 tailSegment++;
                 segmentKey = $"queue_{priority}_seg_{tailSegment}";
-                segmentList = new List<Dictionary<string, object>>();
+                segmentList = new List<string>();
             }
 
             // Append item to segment (FIFO)
-            segmentList.Add(itemDict);
+            segmentList.Add(request.ItemJson);
 
             // Update metadata (count and pointers)
             count++;
@@ -244,7 +231,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                 // Get head segment
                 string segmentKey = $"queue_{priority}_seg_{headSegment}";
-                var segment = await StateManager.TryGetStateAsync<List<Dictionary<string, object>>>(segmentKey);
+                var segment = await StateManager.TryGetStateAsync<List<string>>(segmentKey);
 
                 if (!segment.HasValue || segment.Value.Count == 0)
                 {
@@ -259,7 +246,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                 // Pop single item from front (FIFO)
                 var segmentList = segment.Value;
-                var item = segmentList[0];
+                var itemJson = segmentList[0];
                 segmentList.RemoveAt(0);
 
                 // Handle segment cleanup
@@ -283,8 +270,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                         Logger.LogInformation($"Popped item from priority {priority}, count now {count}");
 
-                        // Serialize item to JSON
-                        var itemJson = JsonSerializer.Serialize(item);
+                        // Return item JSON string directly
                         return new PopResponse { ItemsJson = new List<string> { itemJson } };
                     }
                     else
@@ -300,8 +286,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                         Logger.LogInformation($"Popped last item from priority {priority}, queue now empty");
 
-                        // Serialize item to JSON
-                        var itemJson = JsonSerializer.Serialize(item);
+                        // Return item JSON string directly
                         return new PopResponse { ItemsJson = new List<string> { itemJson } };
                     }
                 }
@@ -320,8 +305,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                     Logger.LogInformation($"Popped item from priority {priority}, count now {count}");
 
-                    // Serialize item to JSON
-                    var itemJson = JsonSerializer.Serialize(item);
+                    // Return item JSON string directly
                     return new PopResponse { ItemsJson = new List<string> { itemJson } };
                 }
             }
@@ -757,7 +741,7 @@ public class PushPopActor : Actor, IPushPopActor
     /// Offload a full segment to the external state store.
     /// Returns true if successful, false otherwise (logs warning, doesn't throw).
     /// </summary>
-    private async Task<bool> OffloadSegmentAsync(int priority, int segmentNum, List<Dictionary<string, object>> segmentData, Dictionary<string, object> metadata)
+    private async Task<bool> OffloadSegmentAsync(int priority, int segmentNum, List<string> segmentData, Dictionary<string, object> metadata)
     {
         try
         {
@@ -795,7 +779,7 @@ public class PushPopActor : Actor, IPushPopActor
     /// Load an offloaded segment from state store back into actor state.
     /// Returns segment data if successful, null otherwise (logs error).
     /// </summary>
-    private async Task<List<Dictionary<string, object>>?> LoadOffloadedSegmentAsync(int priority, int segmentNum, Dictionary<string, object> metadata)
+    private async Task<List<string>?> LoadOffloadedSegmentAsync(int priority, int segmentNum, Dictionary<string, object> metadata)
     {
         try
         {
@@ -812,7 +796,7 @@ public class PushPopActor : Actor, IPushPopActor
             }
 
             // Deserialize from JSON
-            var segmentData = JsonSerializer.Deserialize<List<Dictionary<string, object>>>(result);
+            var segmentData = JsonSerializer.Deserialize<List<string>>(result);
 
             if (segmentData == null || segmentData.Count == 0)
             {
@@ -884,7 +868,7 @@ public class PushPopActor : Actor, IPushPopActor
 
                 // Check if segment exists and is full
                 string segmentKey = $"queue_{priority}_seg_{segmentNum}";
-                var segment = await StateManager.TryGetStateAsync<List<Dictionary<string, object>>>(segmentKey);
+                var segment = await StateManager.TryGetStateAsync<List<string>>(segmentKey);
 
                 if (segment.HasValue && segment.Value.Count == MaxSegmentSize)
                 {

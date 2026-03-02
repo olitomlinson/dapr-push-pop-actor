@@ -22,14 +22,14 @@ public class PushPopActorTests
                 return new ConditionalValue<Dictionary<string, object>>(false, null);
             });
 
-        mock.Setup(m => m.TryGetStateAsync<List<Dictionary<string, object>>>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mock.Setup(m => m.TryGetStateAsync<List<string>>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string key, CancellationToken ct) =>
             {
                 if (stateData.ContainsKey(key))
                 {
-                    return new ConditionalValue<List<Dictionary<string, object>>>(true, (List<Dictionary<string, object>>)stateData[key]);
+                    return new ConditionalValue<List<string>>(true, (List<string>)stateData[key]);
                 }
-                return new ConditionalValue<List<Dictionary<string, object>>>(false, null);
+                return new ConditionalValue<List<string>>(false, null);
             });
 
         // Setup SetStateAsync
@@ -237,5 +237,22 @@ public class PushPopActorTests
         // Assert
         Assert.False(result.Success);
         Assert.Equal("LOCK_NOT_FOUND", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task PushPop_MaintainsExactJsonFormat()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = CreateActor(mockStateManager);
+        var original = "{\"key\":\"value\",\"number\":42}";
+
+        // Act
+        await actor.Push(new Interfaces.PushRequest { ItemJson = original, Priority = 0 });
+        var result = await actor.Pop();
+
+        // Assert
+        Assert.Single(result.ItemsJson);
+        Assert.Equal(original, result.ItemsJson[0]);
     }
 }
