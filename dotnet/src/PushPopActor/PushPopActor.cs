@@ -97,89 +97,108 @@ public class PushPopActor : Actor, IPushPopActor
     }
 
     /// <summary>
+    /// Internal push that stages changes without committing.
+    /// Returns true if push succeeded, false otherwise.
+    /// </summary>
+    private async Task<bool> PushInternal(string itemJson, int priority)
+    {
+        // Validation
+        if (string.IsNullOrEmpty(itemJson))
+        {
+            Logger.LogWarning("Push failed: ItemJson is empty");
+            return false;
+        }
+
+        if (priority < 0)
+        {
+            Logger.LogWarning($"Push failed: priority must be >= 0, got {priority}");
+            return false;
+        }
+
+        // Get metadata
+        var metadata = await GetMetadataAsync();
+
+        // Ensure priority queue exists
+        if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
+        {
+            queueMeta = new QueueMetadata
+            {
+                HeadSegment = 0,
+                TailSegment = 0,
+                Count = 0
+            };
+            metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
+        }
+
+        int tailSegment = queueMeta.TailSegment;
+        int headSegment = queueMeta.HeadSegment;
+        int count = queueMeta.Count;
+
+        // Get current tail segment
+        string segmentKey = $"queue_{priority}_seg_{tailSegment}";
+        var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
+        var segmentQueue = segment.HasValue ? segment.Value : new Queue<string>();
+
+        // Check if segment is full BEFORE appending
+        if (segmentQueue.Count >= MaxSegmentSize)
+        {
+            // Allocate new segment
+            tailSegment++;
+            segmentKey = $"queue_{priority}_seg_{tailSegment}";
+            segmentQueue = new Queue<string>();
+        }
+
+        // Append item to segment (FIFO)
+        segmentQueue.Enqueue(itemJson);
+
+        // Update metadata (count and pointers)
+        count++;
+        queueMeta = queueMeta with
+        {
+            HeadSegment = headSegment,
+            TailSegment = tailSegment,
+            Count = count
+        };
+        metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
+
+        // Stage segment and metadata (don't commit)
+        await StateManager.SetStateAsync(segmentKey, segmentQueue);
+        await SetMetadataAsync(metadata);
+
+        Logger.LogDebug($"Staged push to priority {priority}, count now {count}");
+
+        return true;
+    }
+
+    /// <summary>
     /// Push an item to the queue with optional priority.
     /// </summary>
     public async Task<PushResponse> Push(PushRequest request)
     {
         try
         {
-            // Validate input
-            if (string.IsNullOrEmpty(request.ItemJson))
+            // Push and stage changes
+            bool success = await PushInternal(request.ItemJson, request.Priority);
+
+            if (!success)
             {
-                Logger.LogWarning("Push failed: ItemJson is empty");
                 return new PushResponse { Success = false };
             }
 
-            // Validate priority >= 0
-            if (request.Priority < 0)
-            {
-                Logger.LogWarning($"Push failed: priority must be >= 0, got {request.Priority}");
-                return new PushResponse { Success = false };
-            }
-
-            int priority = request.Priority;
-
-            // Get metadata
-            var metadata = await GetMetadataAsync();
-
-            // Ensure priority queue exists
-            if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
-            {
-                queueMeta = new QueueMetadata
-                {
-                    HeadSegment = 0,
-                    TailSegment = 0,
-                    Count = 0
-                };
-                metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
-            }
-
-            int tailSegment = queueMeta.TailSegment;
-            int headSegment = queueMeta.HeadSegment;
-            int count = queueMeta.Count;
-
-            // Get current tail segment
-            string segmentKey = $"queue_{priority}_seg_{tailSegment}";
-            var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
-            var segmentQueue = segment.HasValue ? segment.Value : new Queue<string>();
-
-            // Check if segment is full BEFORE appending
-            if (segmentQueue.Count >= MaxSegmentSize)
-            {
-                // Allocate new segment
-                tailSegment++;
-                segmentKey = $"queue_{priority}_seg_{tailSegment}";
-                segmentQueue = new Queue<string>();
-            }
-
-            // Append item to segment (FIFO)
-            segmentQueue.Enqueue(request.ItemJson);
-
-            // Update metadata (count and pointers)
-            count++;
-            queueMeta = queueMeta with
-            {
-                HeadSegment = headSegment,
-                TailSegment = tailSegment,
-                Count = count
-            };
-            metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
-
-            // Save segment and metadata
-            await StateManager.SetStateAsync(segmentKey, segmentQueue);
-            await SaveMetadataAsync(metadata);
+            // Commit staged changes
             await StateManager.SaveStateAsync();
 
-            Logger.LogDebug($"Pushed item to queue at priority {priority}, count now {count}");
+            Logger.LogDebug($"Pushed item to queue at priority {request.Priority}");
 
-            // Check and offload segments if eligible
-            await CheckAndOffloadSegmentsAsync(priority, metadata);
+            // Check and offload segments if eligible (non-blocking, best-effort)
+            var metadata = await GetMetadataAsync();
+            await CheckAndOffloadSegmentsAsync(request.Priority, metadata);
 
             return new PushResponse { Success = true };
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error in PushAsync");
+            Logger.LogError(ex, "Error in Push");
             return new PushResponse { Success = false };
         }
     }
@@ -255,7 +274,7 @@ public class PushPopActor : Actor, IPushPopActor
                     var updatedQueues = new Dictionary<int, QueueMetadata>(metadata.Queues);
                     updatedQueues.Remove(priority);
                     metadata = metadata with { Queues = updatedQueues };
-                    await SaveMetadataAsync(metadata);
+                    await SetMetadataAsync(metadata);
                     continue;
                 }
 
@@ -281,7 +300,7 @@ public class PushPopActor : Actor, IPushPopActor
                             Count = count
                         };
                         metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
-                        await SaveMetadataAsync(metadata);
+                        await SetMetadataAsync(metadata);
 
                         Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
@@ -297,7 +316,7 @@ public class PushPopActor : Actor, IPushPopActor
                         var updatedQueues = new Dictionary<int, QueueMetadata>(metadata.Queues);
                         updatedQueues.Remove(priority);
                         metadata = metadata with { Queues = updatedQueues };
-                        await SaveMetadataAsync(metadata);
+                        await SetMetadataAsync(metadata);
 
                         Logger.LogDebug($"Popped last item from priority {priority}, queue now empty");
 
@@ -317,7 +336,7 @@ public class PushPopActor : Actor, IPushPopActor
                         Count = count
                     };
                     metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
-                    await SaveMetadataAsync(metadata);
+                    await SetMetadataAsync(metadata);
 
                     Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
@@ -344,7 +363,7 @@ public class PushPopActor : Actor, IPushPopActor
         return result.Value;
     }
 
-    private async Task SaveMetadataAsync(ActorMetadata metadata)
+    private async Task SetMetadataAsync(ActorMetadata metadata)
     {
         await StateManager.SetStateAsync("metadata", metadata);
     }
@@ -354,17 +373,20 @@ public class PushPopActor : Actor, IPushPopActor
         // Return items to queue and clear lock
         Logger.LogDebug("Lock expired, returning items to queue");
 
-        // Restore items to original priority
+        // Restore all items to original priority (staged, not committed)
         foreach (var jsonString in lockData.ItemsJson)
         {
-            await Push(new PushRequest
+            bool success = await PushInternal(jsonString, lockData.Priority);
+            if (!success)
             {
-                ItemJson = jsonString,
-                Priority = lockData.Priority
-            });
+                Logger.LogError("Failed to restore item during lock expiry");
+            }
         }
 
+        // Remove lock (staged)
         await StateManager.RemoveStateAsync("_active_lock");
+
+        // Commit all changes atomically
         await StateManager.SaveStateAsync();
     }
 
@@ -697,9 +719,8 @@ public class PushPopActor : Actor, IPushPopActor
             string segmentKey = $"queue_{priority}_seg_{segmentNum}";
             await StateManager.RemoveStateAsync(segmentKey);
 
-            // Save metadata
-            await SaveMetadataAsync(updatedMetadata);
-            await StateManager.SaveStateAsync();
+            // Save metadata (staging only - commit happens in caller)
+            await SetMetadataAsync(updatedMetadata);
 
             Logger.LogDebug($"Offloaded segment {segmentNum} for priority {priority} (actor {Id.GetId()})");
             return updatedMetadata;
@@ -750,9 +771,8 @@ public class PushPopActor : Actor, IPushPopActor
             // Delete from state store
             await client.DeleteStateAsync("statestore", offloadKey);
 
-            // Save metadata
-            await SaveMetadataAsync(updatedMetadata);
-            await StateManager.SaveStateAsync();
+            // Save metadata (staging only - commit happens in caller)
+            await SetMetadataAsync(updatedMetadata);
 
             Logger.LogDebug($"Loaded segment {segmentNum} for priority {priority} from state store (actor {Id.GetId()})");
             return updatedMetadata;
