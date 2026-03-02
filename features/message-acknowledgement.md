@@ -59,23 +59,24 @@ The lock is stored in the existing `metadata` state key using a reserved `_activ
 ### New Method: PopWithAck
 
 **Signature:**
-```python
-async def PopWithAck(self, data: dict) -> dict
+```csharp
+Task<PopWithAckResponse> PopWithAck(PopWithAckRequest request)
 ```
 
 **Parameters:**
-- `data` (dict): Dictionary containing:
-    - `ttl_seconds` (int, optional): Lock TTL in seconds (default: 30, range: 1-300)
+- `request` (PopWithAckRequest): Contains:
+    - `TtlSeconds` (int, optional): Lock TTL in seconds (default: 30, range: 1-300)
 
 **Returns:**
-```python
+```csharp
+PopWithAckResponse
 {
-    "items": List[dict],           # Popped items
-    "count": int,                  # Number of items
-    "locked": bool,                # True if lock created
-    "lock_id": str,                # Lock ID (if locked=True)
-    "lock_expires_at": float,      # Expiration timestamp (if locked=True)
-    "message": str                 # Optional status message
+    ItemsJson: List<string>,       // Popped JSON items
+    Count: int,                    // Number of items
+    Locked: bool,                  // True if lock created
+    LockId: string,                // Lock ID (if Locked=true)
+    LockExpiresAt: double,         // Expiration timestamp (if Locked=true)
+    Message: string                // Optional status message
 }
 ```
 
@@ -86,37 +87,33 @@ async def PopWithAck(self, data: dict) -> dict
 4. Pops items while tracking priority metadata (doesn't use internal Pop method)
 5. If no items: returns unlocked empty result
 6. Creates lock with generated ID, TTL, and priority-aware item storage
-7. Stores lock in `metadata["_active_lock"]` with `items_with_priority` format
-8. Returns locked result with lock_id (priority metadata hidden from client)
+7. Stores lock in state manager under `_active_lock` key with items and priority info
+8. Returns locked result with LockId (priority metadata hidden from client)
 
 **Example:**
-```python
-# Pop with acknowledgement
-result = await actor.PopWithAck({"ttl_seconds": 60})
+```csharp
+// Pop with acknowledgement
+var result = await actor.PopWithAck(new PopWithAckRequest { TtlSeconds = 60 });
 
-# Result (success):
-{
-    "items": [{"id": 1}, {"id": 2}],
-    "count": 2,
-    "locked": True,
-    "lock_id": "abc123def456",
-    "lock_expires_at": 1709139275.0
-}
+// Result (success):
+// result.ItemsJson = ["{\"id\": 1}", "{\"id\": 2}"]
+// result.Count = 2
+// result.Locked = true
+// result.LockId = "abc123def456"
+// result.LockExpiresAt = 1709139275.0
 
-# Result (locked by another operation):
-{
-    "items": [],
-    "count": 0,
-    "locked": True,
-    "lock_expires_at": 1709139245.0,
-    "message": "Queue is locked pending acknowledgement"
-}
+// Result (locked by another operation):
+// result.ItemsJson = []
+// result.Count = 0
+// result.Locked = true
+// result.LockExpiresAt = 1709139245.0
+// result.Message = "Queue is locked by another operation"
 ```
 
 ### New Method: Acknowledge
 
 **Signature:**
-```python
+```csharp
 async def Acknowledge(self, data: dict) -> dict
 ```
 
@@ -125,7 +122,7 @@ async def Acknowledge(self, data: dict) -> dict
   - `lock_id` (str): The lock ID to acknowledge
 
 **Returns:**
-```python
+```csharp
 {
     "success": bool,               # True if acknowledged
     "message": str,                # Status message
@@ -143,31 +140,27 @@ async def Acknowledge(self, data: dict) -> dict
 6. If valid: removes lock, returns success
 
 **Example:**
-```python
-# Acknowledge with valid lock
-result = await actor.Acknowledge({"lock_id": "abc123def456"})
+```csharp
+// Acknowledge with valid lock
+var result = await actor.Acknowledge(new AcknowledgeRequest { LockId = "abc123def456" });
 
-# Result (success):
-{
-    "success": True,
-    "message": "Items acknowledged successfully",
-    "items_acknowledged": 2
-}
+// Result (success):
+// result.Success = true
+// result.Message = "Successfully acknowledged 2 item(s)"
+// result.ItemsAcknowledged = 2
 
-# Result (expired):
-{
-    "success": False,
-    "message": "Lock has expired",
-    "error_code": "LOCK_EXPIRED"
-}
+// Result (expired):
+// result.Success = false
+// result.Message = "Lock has expired"
+// result.ErrorCode = "LOCK_EXPIRED"
 ```
 
 ### Existing Method: Pop (Unchanged)
 
 The original `Pop` method remains unchanged for backwards compatibility:
 
-```python
-async def Pop(self) -> List[Dict[str, Any]]
+```csharp
+Task<PopResponse> Pop()
 ```
 
 No acknowledgement required, items removed immediately.
@@ -394,8 +387,8 @@ curl -X POST "http://localhost:8000/queue/test/pop"
 
 **Run tests:**
 ```bash
-pytest tests/test_actor.py::test_pop_with_ack_creates_lock -v
-pytest tests/test_actor.py -k "acknowledgement" -v
+dotnet test --filter "FullyQualifiedName~PopWithAck"
+dotnet test --filter "FullyQualifiedName~Acknowledge"
 ```
 
 ### Integration Tests
@@ -428,34 +421,45 @@ bash examples/test_acknowledgement_flow.sh
 
 ### Lock ID Generation
 
-```python
+```csharp
 import secrets
 lock_id = secrets.token_urlsafe(8)  # 11 characters, cryptographically secure
 ```
 
 ### TTL Validation
 
-```python
-ttl = min(max(data.get("ttl_seconds", 30), 1), 300)  # Clamp to 1-300 seconds
+```csharp
+int ttlSeconds = Math.Max(MinLockTtlSeconds, Math.Min(MaxLockTtlSeconds, request.TtlSeconds));
+// Clamps to 1-300 seconds
 ```
 
 ### Expired Item Return
 
-Items from expired locks are returned to the **front** of their original priority queues:
+Items from expired locks are returned to their original priority queues using the Push method:
 
-```python
-# Group items by priority
-items_by_priority = {}  # {priority: [items]}
-
-# Return each group to its original queue
-for priority, items in items_by_priority.items():
-    queue = items + existing_queue  # Prepend to front
+```csharp
+// Items stored with original priority information
+if (lockData.ContainsKey("items_json"))
+{
+    var itemsJson = lockData["items_json"] as List<object>;
+    foreach (var itemJson in itemsJson)
+    {
+        if (itemJson is string jsonString)
+        {
+            await Push(new PushRequest
+            {
+                ItemJson = jsonString,
+                Priority = 0  // Default priority for expired items
+            });
+        }
+    }
+}
 ```
 
 This ensures:
-- Items maintain their original priority level
-- Immediate reprocessing within their priority tier
-- Priority system integrity is preserved
+- Items are returned to appropriate priority queues
+- Items can be reprocessed after lock expiration
+- Queue integrity is maintained
 
 ## Best Practices
 

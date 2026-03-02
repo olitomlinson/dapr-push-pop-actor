@@ -4,29 +4,32 @@ Complete reference for PushPopActor methods and REST API endpoints.
 
 ## Actor Interface
 
-### PushPopActorInterface
+### IPushPopActor
 
 Actor interface definition for creating typed proxies.
 
-```python
-from push_pop_actor import PushPopActorInterface
+```csharp
+using PushPopActor.Interfaces;
 ```
 
 ## Actor Methods
 
 ### Push
 
-Push a dictionary onto the queue (FIFO - added to end).
+Push a JSON item onto the queue (FIFO - added to end).
 
-```python
-async def Push(self, item: dict) -> bool
+```csharp
+Task<PushResponse> Push(PushRequest request)
 ```
 
 **Parameters:**
-- `item` (dict): Dictionary to push onto the queue. Must be a valid Python dictionary that can be JSON-serialized.
+- `request` (PushRequest): Contains:
+  - `ItemJson` (string): JSON string to push onto the queue
+  - `Priority` (int): Priority level (default: 0, must be >= 0)
 
 **Returns:**
-- `bool`: `True` if push was successful, `False` if push failed (e.g., invalid input type)
+- `PushResponse`: Contains:
+  - `Success` (bool): `true` if push was successful, `false` if failed
 
 **Behavior:**
 - Appends item to the end of the queue (FIFO)
@@ -36,63 +39,90 @@ async def Push(self, item: dict) -> bool
 
 **Example:**
 
-```python
-from dapr.actor import ActorId, ActorProxy
-from push_pop_actor import PushPopActorInterface
+```csharp
+using Dapr.Actors;
+using Dapr.Actors.Client;
+using PushPopActor.Interfaces;
+using System.Text.Json;
 
-proxy = ActorProxy.create(
-    actor_type="PushPopActor",
-    actor_id=ActorId("my-queue"),
-    actor_interface=PushPopActorInterface
-)
+var proxy = ActorProxy.Create<IPushPopActor>(
+    new ActorId("my-queue"),
+    "PushPopActor"
+);
 
-# Simple item
-success = await proxy.Push({"task": "send_email"})
-print(success)  # True
+// Simple item
+var response = await proxy.Push(new PushRequest
+{
+    ItemJson = "{\"task\": \"send_email\"}",
+    Priority = 0
+});
+Console.WriteLine(response.Success);  // True
 
-# Complex nested item
-success = await proxy.Push({
-    "task_id": 123,
-    "action": "process_upload",
-    "metadata": {
-        "user_id": 456,
-        "file": "document.pdf",
-        "tags": ["urgent", "important"]
+// Complex nested item
+var item = new
+{
+    task_id = 123,
+    action = "process_upload",
+    metadata = new
+    {
+        user_id = 456,
+        file = "document.pdf",
+        tags = new[] { "urgent", "important" }
     }
-})
-print(success)  # True
+};
+response = await proxy.Push(new PushRequest
+{
+    ItemJson = JsonSerializer.Serialize(item),
+    Priority = 0
+});
+Console.WriteLine(response.Success);  // True
 
-# Invalid item (not a dict)
-success = await proxy.Push("not a dict")
-print(success)  # False
+// Invalid item (empty)
+response = await proxy.Push(new PushRequest
+{
+    ItemJson = "",
+    Priority = 0
+});
+Console.WriteLine(response.Success);  // False
 ```
 
 **Error Handling:**
 
-```python
-try:
-    success = await proxy.Push(item)
-    if not success:
-        print("Push failed - check item is a valid dict")
-except Exception as e:
-    print(f"Actor invocation error: {e}")
+```csharp
+try
+{
+    var response = await proxy.Push(new PushRequest
+    {
+        ItemJson = itemJson,
+        Priority = 0
+    });
+    if (!response.Success)
+    {
+        Console.WriteLine("Push failed - check item is valid JSON");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Actor invocation error: {ex.Message}");
+}
 ```
 
 ---
 
 ### Pop
 
-Pop a single dictionary from the queue (FIFO - removed from front).
+Pop a single item from the queue (FIFO - removed from front).
 
-```python
-async def Pop(self) -> list
+```csharp
+Task<PopResponse> Pop()
 ```
 
 **Parameters:**
 - None
 
 **Returns:**
-- `list`: Array with single dictionary, or empty array `[]` if queue is empty.
+- `PopResponse`: Contains:
+  - `ItemsJson` (List<string>): List with single JSON string, or empty list if queue is empty
 
 **Behavior:**
 - Removes and returns a single item from the front of the queue
@@ -102,64 +132,76 @@ async def Pop(self) -> list
 
 **Example:**
 
-```python
-# Pop single item
-items = await proxy.Pop()
-if items:
-    print(items[0])  # {"task": "send_email"}
-else:
-    print("Queue is empty")
+```csharp
+// Pop single item
+var result = await proxy.Pop();
+if (result.ItemsJson.Any())
+{
+    Console.WriteLine(result.ItemsJson[0]);  // {"task": "send_email"}
+}
+else
+{
+    Console.WriteLine("Queue is empty");
+}
 
-# Pop from empty queue
-items = await proxy.Pop()
-print(items)  # []
+// Pop from empty queue
+result = await proxy.Pop();
+Console.WriteLine(result.ItemsJson.Count);  // 0
 ```
 
 **Processing Pattern:**
 
-```python
-# Consumer loop - pop one item at a time
-while True:
-    items = await proxy.Pop()
+```csharp
+// Consumer loop - pop one item at a time
+while (true)
+{
+    var result = await proxy.Pop();
 
-    if not items:
-        await asyncio.sleep(1)  # Wait for more items
-        continue
+    if (!result.ItemsJson.Any())
+    {
+        await Task.Delay(1000);  // Wait for more items
+        continue;
+    }
 
-    await process_item(items[0])
+    await ProcessItemAsync(result.ItemsJson[0]);
+}
 
-# Consumer loop - pop multiple items
-all_items = []
-for _ in range(10):  # Pop up to 10 items
-    items = await proxy.Pop()
-    if not items:
-        break
-    all_items.extend(items)
+// Consumer loop - pop multiple items
+var allItems = new List<string>();
+for (int i = 0; i < 10; i++)  // Pop up to 10 items
+{
+    var result = await proxy.Pop();
+    if (!result.ItemsJson.Any())
+        break;
+    allItems.AddRange(result.ItemsJson);
+}
 
-for item in all_items:
-    await process_item(item)
+foreach (var item in allItems)
+{
+    await ProcessItemAsync(item);
+}
 ```
 
 ### PopWithAck
 
-Pop a single dictionary from the queue with acknowledgement requirement (FIFO with lock).
+Pop a single item from the queue with acknowledgement requirement (FIFO with lock).
 
-```python
-async def PopWithAck(self, data: dict) -> dict
+```csharp
+Task<PopWithAckResponse> PopWithAck(PopWithAckRequest request)
 ```
 
 **Parameters:**
-- `data` (dict): Dictionary containing:
-  - `ttl_seconds` (int, optional): Lock TTL in seconds (default: 30, range: 1-300)
+- `request` (PopWithAckRequest): Contains:
+  - `TtlSeconds` (int, optional): Lock TTL in seconds (default: 30, range: 1-300)
 
 **Returns:**
-- `dict`: Dictionary with the following keys:
-  - `items` (list): Array of popped dictionaries
-  - `count` (int): Number of items returned
-  - `locked` (bool): `True` if lock was created, `False` if queue empty or already locked
-  - `lock_id` (str, optional): Lock ID to use for acknowledgement (present if `locked=True`)
-  - `lock_expires_at` (float, optional): Unix timestamp when lock expires (present if `locked=True`)
-  - `message` (str, optional): Status message (e.g., "Queue is locked pending acknowledgement")
+- `PopWithAckResponse`: Contains:
+  - `ItemsJson` (List<string>): List of popped JSON strings
+  - `Count` (int): Number of items returned
+  - `Locked` (bool): `true` if lock was created, `false` if queue empty or already locked
+  - `LockId` (string, optional): Lock ID to use for acknowledgement (present if `Locked=true`)
+  - `LockExpiresAt` (double, optional): Unix timestamp when lock expires (present if `Locked=true`)
+  - `Message` (string, optional): Status message
 
 **Behavior:**
 - Checks for existing active lock before popping
@@ -173,69 +215,81 @@ async def PopWithAck(self, data: dict) -> dict
 
 **Example:**
 
-```python
-# Pop with acknowledgement
-result = await proxy.PopWithAck({"ttl_seconds": 60})
+```csharp
+// Pop with acknowledgement
+var result = await proxy.PopWithAck(new PopWithAckRequest { TtlSeconds = 60 });
 
-if result["locked"] and result["count"] > 0:
-    # Got items with lock
-    items = result["items"]
-    lock_id = result["lock_id"]
+if (result.Locked && result.Count > 0)
+{
+    // Got items with lock
+    var items = result.ItemsJson;
+    var lockId = result.LockId;
 
-    try:
-        # Process items
-        for item in items:
-            await process_item(item)
+    try
+    {
+        // Process items
+        foreach (var item in items)
+        {
+            await ProcessItemAsync(item);
+        }
 
-        # Acknowledge successful processing
-        ack_result = await proxy.Acknowledge({"lock_id": lock_id})
-        print(ack_result["success"])  # True
-    except Exception as e:
-        # Don't acknowledge - lock will expire and items return to queue
-        logger.error(f"Processing failed: {e}")
-elif result["locked"] and result["count"] == 0:
-    # Queue is locked by another operation
-    print(f"Queue locked until {result['lock_expires_at']}")
-else:
-    # Queue is empty
-    print("No items available")
+        // Acknowledge successful processing
+        var ackResult = await proxy.Acknowledge(new AcknowledgeRequest { LockId = lockId });
+        Console.WriteLine(ackResult.Success);  // True
+    }
+    catch (Exception ex)
+    {
+        // Don't acknowledge - lock will expire and items return to queue
+        Console.WriteLine($"Processing failed: {ex.Message}");
+    }
+}
+else if (result.Locked && result.Count == 0)
+{
+    // Queue is locked by another operation
+    Console.WriteLine($"Queue locked until {result.LockExpiresAt}");
+}
+else
+{
+    // Queue is empty
+    Console.WriteLine("No items available");
+}
 ```
 
 **Edge Cases:**
 
-```python
-# Pop while another lock is active
-result1 = await proxy.PopWithAck({})  # Success
-result2 = await proxy.PopWithAck({})  # Locked
-print(result2["locked"])  # True
-print(result2["count"])   # 0
-print(result2["message"]) # "Queue is locked pending acknowledgement"
+```csharp
+// Pop while another lock is active
+var result1 = await proxy.PopWithAck(new PopWithAckRequest());  // Success
+var result2 = await proxy.PopWithAck(new PopWithAckRequest());  // Locked
+Console.WriteLine(result2.Locked);  // True
+Console.WriteLine(result2.Count);   // 0
+Console.WriteLine(result2.Message); // "Queue is locked by another operation"
 
-# Custom TTL
-result = await proxy.PopWithAck({"ttl_seconds": 120})  # 2 minute lock
+// Custom TTL
+var result = await proxy.PopWithAck(new PopWithAckRequest { TtlSeconds = 120 });  // 2 minute lock
 
-# TTL bounds are enforced (1-300 seconds)
-result = await proxy.PopWithAck({"ttl_seconds": 500})  # Clamped to 300
+// TTL bounds are enforced (1-300 seconds)
+result = await proxy.PopWithAck(new PopWithAckRequest { TtlSeconds = 500 });  // Clamped to 300
 ```
 
 ### Acknowledge
 
 Acknowledge popped items using lock ID.
 
-```python
-async def Acknowledge(self, data: dict) -> dict
+```csharp
+Task<AcknowledgeResponse> Acknowledge(AcknowledgeRequest request)
 ```
 
 **Parameters:**
-- `data` (dict): Dictionary containing:
-  - `lock_id` (str): The lock ID returned by `PopWithAck`
+- `request` (AcknowledgeRequest): Contains:
+  - `LockId` (string): The lock ID returned by `PopWithAck`
 
 **Returns:**
-- `dict`: Dictionary with the following keys:
-  - `success` (bool): `True` if acknowledged, `False` if failed
-  - `message` (str): Status message
-  - `items_acknowledged` (int, optional): Number of items acknowledged (present if `success=True`)
-  - `error_code` (str, optional): Error code (e.g., "LOCK_EXPIRED")
+- `AcknowledgeResponse`: Contains:
+  - `Success` (bool): `true` if acknowledged, `false` if failed
+  - `Message` (string): Status message
+  - `ItemsAcknowledged` (int, optional): Number of items acknowledged (present if `Success=true`)
+  - `ErrorCode` (string, optional): Error code (e.g., "LOCK_EXPIRED")
 
 **Behavior:**
 - Validates lock ID against active lock
@@ -247,64 +301,74 @@ async def Acknowledge(self, data: dict) -> dict
 
 **Example:**
 
-```python
-# Successful acknowledgement
-result = await proxy.PopWithAck({})
-lock_id = result["lock_id"]
+```csharp
+// Successful acknowledgement
+var result = await proxy.PopWithAck(new PopWithAckRequest());
+var lockId = result.LockId;
 
-# Process items...
+// Process items...
 
-ack_result = await proxy.Acknowledge({"lock_id": lock_id})
-print(ack_result)
-# {
-#     "success": True,
-#     "message": "Items acknowledged successfully",
-#     "items_acknowledged": 5
-# }
+var ackResult = await proxy.Acknowledge(new AcknowledgeRequest { LockId = lockId });
+Console.WriteLine(JsonSerializer.Serialize(ackResult));
+// {
+//     "Success": true,
+//     "Message": "Successfully acknowledged 5 item(s)",
+//     "ItemsAcknowledged": 5
+// }
 
-# Expired lock
-await asyncio.sleep(35)  # Wait past 30 second default TTL
-ack_result = await proxy.Acknowledge({"lock_id": lock_id})
-print(ack_result)
-# {
-#     "success": False,
-#     "message": "Lock has expired",
-#     "error_code": "LOCK_EXPIRED"
-# }
+// Expired lock
+await Task.Delay(35000);  // Wait past 30 second default TTL
+ackResult = await proxy.Acknowledge(new AcknowledgeRequest { LockId = lockId });
+Console.WriteLine(JsonSerializer.Serialize(ackResult));
+// {
+//     "Success": false,
+//     "Message": "Lock has expired",
+//     "ErrorCode": "LOCK_EXPIRED"
+// }
 
-# Invalid lock ID
-ack_result = await proxy.Acknowledge({"lock_id": "wrong_id"})
-print(ack_result)
-# {
-#     "success": False,
-#     "message": "Invalid lock_id"
-# }
+// Invalid lock ID
+ackResult = await proxy.Acknowledge(new AcknowledgeRequest { LockId = "wrong_id" });
+Console.WriteLine(JsonSerializer.Serialize(ackResult));
+// {
+//     "Success": false,
+//     "Message": "Invalid lock_id"
+// }
 ```
 
 **Processing Pattern with Acknowledgement:**
 
-```python
-# Consumer loop with acknowledgement
-while True:
-    result = await proxy.PopWithAck({"ttl_seconds": 60})
+```csharp
+// Consumer loop with acknowledgement
+while (true)
+{
+    var result = await proxy.PopWithAck(new PopWithAckRequest { TtlSeconds = 60 });
 
-    if not result["locked"] or result["count"] == 0:
-        await asyncio.sleep(1)
-        continue
+    if (!result.Locked || result.Count == 0)
+    {
+        await Task.Delay(1000);
+        continue;
+    }
 
-    lock_id = result["lock_id"]
-    items = result["items"]
+    var lockId = result.LockId;
+    var items = result.ItemsJson;
 
-    try:
-        # Process all items
-        for item in items:
-            await process_item(item)
+    try
+    {
+        // Process all items
+        foreach (var item in items)
+        {
+            await ProcessItemAsync(item);
+        }
 
-        # Acknowledge successful processing
-        await proxy.Acknowledge({"lock_id": lock_id})
-    except Exception as e:
-        logger.error(f"Processing failed: {e}")
-        # Don't acknowledge - items will return to queue after TTL
+        // Acknowledge successful processing
+        await proxy.Acknowledge(new AcknowledgeRequest { LockId = lockId });
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Processing failed");
+        // Don't acknowledge - items will return to queue after TTL
+    }
+}
 ```
 
 ---
@@ -562,65 +626,71 @@ curl http://localhost:8000/health
 
 ## Data Types
 
-### Item (Dictionary)
+### Item (JSON String)
 
-Items pushed to the queue must be JSON-serializable Python dictionaries.
+Items pushed to the queue must be valid JSON strings.
 
 **Valid Items:**
 
-```python
-# Simple flat dict
-{"id": 1, "name": "Alice"}
+```csharp
+// Simple flat object
+var item1 = "{\"id\": 1, \"name\": \"Alice\"}";
 
-# Nested structures
+// Or use JsonSerializer
+var item2 = JsonSerializer.Serialize(new { id = 1, name = "Alice" });
+
+// Nested structures
+var item3 = JsonSerializer.Serialize(new
 {
-    "user": {"id": 123, "email": "alice@example.com"},
-    "metadata": {"tags": ["urgent"], "priority": 5}
-}
+    user = new { id = 123, email = "alice@example.com" },
+    metadata = new { tags = new[] { "urgent" }, priority = 5 }
+});
 
-# Arrays
-{"items": [1, 2, 3], "total": 3}
+// Arrays
+var item4 = JsonSerializer.Serialize(new { items = new[] { 1, 2, 3 }, total = 3 });
 
-# Mixed types
+// Mixed types
+var item5 = JsonSerializer.Serialize(new
 {
-    "string": "value",
-    "number": 123,
-    "float": 45.67,
-    "boolean": True,
-    "null": None,
-    "array": [1, 2, 3],
-    "nested": {"key": "value"}
-}
+    str = "value",
+    number = 123,
+    floating = 45.67,
+    boolean = true,
+    nullValue = (string?)null,
+    array = new[] { 1, 2, 3 },
+    nested = new { key = "value" }
+});
 ```
 
 **Invalid Items:**
 
-```python
-# Not a dict
-"string"
-123
-[1, 2, 3]
-None
+```csharp
+// Empty or null
+var invalid1 = "";
+var invalid2 = null;
 
-# Non-JSON-serializable
-{"datetime": datetime.now()}  # datetime objects can't be JSON serialized
-{"function": lambda x: x}     # functions can't be serialized
-{"bytes": b"binary data"}     # bytes can't be JSON serialized directly
+// Non-JSON string
+var invalid3 = "not valid json";
 ```
 
 **Best Practice:**
 
-Convert non-serializable types before pushing:
+Use JsonSerializer for complex objects:
 
-```python
-from datetime import datetime
+```csharp
+using System.Text.Json;
 
-# Convert datetime to ISO string
-item = {
-    "created_at": datetime.now().isoformat(),
-    "data": "payload"
-}
-await proxy.Push(item)
+var item = new
+{
+    created_at = DateTime.UtcNow,
+    data = "payload"
+};
+
+await proxy.Push(new PushRequest
+{
+    ItemJson = JsonSerializer.Serialize(item),
+    Priority = 0
+});
 ```
 
 ---
@@ -629,31 +699,39 @@ await proxy.Push(item)
 
 ### Actor Method Errors
 
-```python
-from dapr.actor import ActorProxy, ActorId
-from push_pop_actor import PushPopActorInterface
+```csharp
+using Dapr.Actors;
+using Dapr.Actors.Client;
+using PushPopActor.Interfaces;
 
-try:
-    proxy = ActorProxy.create(
-        actor_type="PushPopActor",
-        actor_id=ActorId("my-queue"),
-        actor_interface=PushPopActorInterface
-    )
+try
+{
+    var proxy = ActorProxy.Create<IPushPopActor>(
+        new ActorId("my-queue"),
+        "PushPopActor"
+    );
 
-    success = await proxy.Push({"data": "value"})
-    if not success:
-        # Handle push failure (e.g., invalid item type)
-        pass
+    var pushResponse = await proxy.Push(new PushRequest
+    {
+        ItemJson = "{\"data\": \"value\"}",
+        Priority = 0
+    });
+    if (!pushResponse.Success)
+    {
+        // Handle push failure (e.g., invalid item)
+    }
 
-    items = await proxy.Pop(10)
-    # items is always a list (empty if no items)
-
-except Exception as e:
-    # Handle actor invocation errors
-    # - Dapr sidecar not running
-    # - Network issues
-    # - Actor not registered
-    print(f"Error: {e}")
+    var popResponse = await proxy.Pop();
+    // ItemsJson is always a list (empty if no items)
+}
+catch (Exception ex)
+{
+    // Handle actor invocation errors
+    // - Dapr sidecar not running
+    // - Network issues
+    // - Actor not registered
+    Console.WriteLine($"Error: {ex.Message}");
+}
 ```
 
 ### REST API Errors
@@ -675,14 +753,23 @@ curl -X POST http://localhost:8000/queue/my-queue/push \
 The example API server has no built-in rate limiting. For production:
 
 1. **Add rate limiting middleware:**
-   ```python
-   from slowapi import Limiter
-   limiter = Limiter(key_func=get_remote_address)
+   ```csharp
+   using AspNetCoreRateLimit;
 
-   @app.post("/queue/{queue_id}/push")
-   @limiter.limit("100/minute")
-   async def push_item(...):
-       ...
+   // In Program.cs
+   builder.Services.AddMemoryCache();
+   builder.Services.Configure<IpRateLimitOptions>(options =>
+   {
+       options.GeneralRules = new List<RateLimitRule>
+       {
+           new RateLimitRule
+           {
+               Endpoint = "POST:/queue/*/push",
+               Limit = 100,
+               Period = "1m"
+           }
+       };
+   });
    ```
 
 2. **Use API Gateway:** Deploy behind nginx, AWS API Gateway, etc.
@@ -720,20 +807,40 @@ See [features/segmented-queue.md](../features/segmented-queue.md) for technical 
 
 ### State Store Impact
 
-```python
-# ❌ Inefficient - Many roundtrips
-for i in range(100):
-    await proxy.Push({"id": i})
+```csharp
+// ❌ Inefficient - Many roundtrips
+for (int i = 0; i < 100; i++)
+{
+    await proxy.Push(new PushRequest
+    {
+        ItemJson = JsonSerializer.Serialize(new { id = i }),
+        Priority = 0
+    });
+}
 
-# ✅ Better - Single actor, single queue, processed serially
-items = [{"id": i} for i in range(100)]
-for item in items:
-    await proxy.Push(item)
+// ✅ Better - Single actor, single queue, processed serially
+var items = Enumerable.Range(0, 100).Select(i => new { id = i });
+foreach (var item in items)
+{
+    await proxy.Push(new PushRequest
+    {
+        ItemJson = JsonSerializer.Serialize(item),
+        Priority = 0
+    });
+}
 
-# ✅ Best - Use multiple actors for parallelism
-actors = [ActorProxy.create(..., ActorId(f"queue-{i}"), ...) for i in range(10)]
-for i, item in enumerate(items):
-    await actors[i % 10].Push(item)
+// ✅ Best - Use multiple actors for parallelism
+var actors = Enumerable.Range(0, 10)
+    .Select(i => ActorProxy.Create<IPushPopActor>(new ActorId($"queue-{i}"), "PushPopActor"))
+    .ToList();
+for (int i = 0; i < items.Count(); i++)
+{
+    await actors[i % 10].Push(new PushRequest
+    {
+        ItemJson = JsonSerializer.Serialize(items.ElementAt(i)),
+        Priority = 0
+    });
+}
 ```
 
 ---
@@ -746,25 +853,6 @@ for i, item in enumerate(items):
 - **Max Depth**: API server limits to 100 items per pop (configurable)
 - **Concurrency**: One operation per actor at a time (per actor ID)
 - **Breaking Change**: v4.0+ uses segmented storage, incompatible with v3.x state format
-
----
-
-## Version Compatibility
-
-- **Dapr**: 1.17.0+
-- **Python**: 3.11+
-- **push-pop-actor**:
-  - v3.x: Non-segmented queues
-  - v4.0+: **Segmented queues** (breaking change)
-
-### Version 4.0 Breaking Changes
-
-V4.0 introduces segmented queue architecture for improved performance:
-
-- **State Format**: Changed from `queue_N` to `queue_N_seg_M` keys
-- **Migration**: Requires draining v3.x queues before upgrading (see [features/segmented-queue.md](../features/segmented-queue.md))
-- **Benefits**: Constant memory/network per operation, scales to millions of items
-- **API**: No API changes - fully transparent to users
 
 ---
 

@@ -104,7 +104,7 @@ public class PushPopActor : Actor, IPushPopActor
             var segment = await StateManager.TryGetStateAsync<List<string>>(segmentKey);
             var segmentList = segment.HasValue ? segment.Value : new List<string>();
 
-            // Check if segment is full BEFORE appending (matching Python)
+            // Check if segment is full BEFORE appending
             if (segmentList.Count >= MaxSegmentSize)
             {
                 // Allocate new segment
@@ -409,7 +409,7 @@ public class PushPopActor : Actor, IPushPopActor
                 }
             }
 
-            // Pop items (just one for now, matching Python behavior)
+            // Pop items (just one for now)
             var popResult = await Pop();
 
             if (popResult.ItemsJson.Count == 0)
@@ -560,7 +560,7 @@ public class PushPopActor : Actor, IPushPopActor
     /// </summary>
     private string GenerateLockId()
     {
-        // Generate 11-character alphanumeric string matching Python's secrets.token_urlsafe(8)
+        // Generate 11-character alphanumeric string 
         const string chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
         var bytes = new byte[LockIdLength];
         using (var rng = RandomNumberGenerator.Create())

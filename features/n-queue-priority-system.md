@@ -63,77 +63,90 @@ Actor State:
 ### Push Method
 
 **Signature:**
-```python
-async def Push(self, data: dict) -> bool
+```csharp
+Task<PushResponse> Push(PushRequest request)
 ```
 
 **Parameters:**
-- `data` (dict): Dictionary containing:
-  - `item` (dict): Dictionary to push onto the queue
-  - `priority` (int, optional): Priority level (0 = highest priority, 1, 2, ...). Default: 0
+- `request` (PushRequest): Contains:
+  - `ItemJson` (string): JSON string to push onto the queue
+  - `Priority` (int, optional): Priority level (0 = highest priority, 1, 2, ...). Default: 0
 
 **Returns:**
-- `bool`: True if successful, False otherwise
+- `PushResponse`: Contains `Success` (bool) - true if successful, false otherwise
 
 **Behavior:**
-1. Validates item is a dictionary
+1. Validates ItemJson is not empty
 2. Validates priority is non-negative integer (>= 0)
-3. Loads queue at `queue_{priority}` (creates empty if doesn't exist)
-4. Appends item to end of queue (FIFO)
-5. Loads `metadata` map
-6. Increments count for priority: `counts[str(priority)] += 1`
-7. Saves both queue and metadata map
+3. Loads queue at `queue_{priority}_seg_{tailSegment}` (creates empty if doesn't exist)
+4. Appends item to end of segment (FIFO)
+5. Loads metadata map
+6. Increments count for priority
+7. Saves both segment and metadata map
 
 **Example:**
-```python
-# Push high priority item
-success = await actor.Push({"item": {"task": "critical_alert"}, "priority": 0})
+```csharp
+// Push high priority item
+var response = await actor.Push(new PushRequest
+{
+    ItemJson = "{\"task\": \"critical_alert\"}",
+    Priority = 0
+});
 
-# Push low priority item
-success = await actor.Push({"item": {"task": "cleanup_logs"}, "priority": 5})
+// Push low priority item
+response = await actor.Push(new PushRequest
+{
+    ItemJson = "{\"task\": \"cleanup_logs\"}",
+    Priority = 5
+});
 
-# Push with default priority (0)
-success = await actor.Push({"item": {"task": "important_task"}})
+// Push with default priority (0)
+response = await actor.Push(new PushRequest
+{
+    ItemJson = "{\"task\": \"important_task\"}",
+    Priority = 0
+});
 ```
 
 ### Pop Method
 
 **Signature:**
-```python
-async def Pop(self) -> List[Dict[str, Any]]
+```csharp
+Task<PopResponse> Pop()
 ```
 
 **Parameters:**
 - None
 
 **Returns:**
-- `List[Dict[str, Any]]`: Array with single dictionary (empty array if no items available)
+- `PopResponse`: Contains `ItemsJson` (List<string>) - list with single JSON string (empty list if no items available)
 
 **Behavior (Priority-Ordered Draining):**
-1. Loads `metadata` map
+1. Loads metadata map
 2. Returns empty list if map is empty (no queues have items)
 3. Sorts priority keys numerically (0, 1, 2, ...)
 4. For each priority with non-zero count (in order):
-   - Loads `queue_{priority}`
+   - Loads `queue_{priority}_seg_{headSegment}`
    - Pops single item from front (FIFO)
-   - Updates queue
+   - Updates segment
    - Updates metadata map (decrements or removes key if zero)
    - Saves updated metadata map
    - Returns item in a list
 5. Returns empty list if all queues are empty
 
 **Example:**
-```python
-# Pop single item - will take from priority 0 first, then 1, then 2, etc.
-items = await actor.Pop()
-# Result: [p0_item1, p0_item2, p0_item3, p1_item1, p1_item2]
+```csharp
+// Pop single item - will take from priority 0 first, then 1, then 2, etc.
+var result = await actor.Pop();
+// result.ItemsJson contains single JSON string or empty list
+// Drains in order: [p0_item1, p0_item2, p0_item3, p1_item1, p1_item2]
 ```
 
 ## Examples
 
 ### Example 1: Basic Priority Usage
 
-```python
+```csharp
 # Push items with different priorities
 await actor.Push({"item": {"id": 1, "msg": "critical"}, "priority": 0})
 await actor.Push({"item": {"id": 2, "msg": "low"}, "priority": 5})
@@ -146,7 +159,7 @@ items = await actor.Pop(10)
 
 ### Example 2: Priority Draining
 
-```python
+```csharp
 # Push 3 high priority, 2 medium priority items
 await actor.Push({"item": {"id": 1}, "priority": 0})
 await actor.Push({"item": {"id": 2}, "priority": 0})
@@ -163,7 +176,7 @@ items = await actor.Pop(4)
 
 ### Example 3: Sparse Priorities
 
-```python
+```csharp
 # Push to priorities 0, 5, 10 (skip 1-4, 6-9)
 await actor.Push({"item": {"id": 1}, "priority": 0})
 await actor.Push({"item": {"id": 2}, "priority": 5})
@@ -195,7 +208,7 @@ curl -X POST "http://localhost:8000/queue/my-queue/pop"
 
 ### 1. Default Priority
 **Scenario:** Push without specifying priority
-```python
+```csharp
 await actor.Push({"item": {"data": "value"}})  # Defaults to priority 0
 ```
 
@@ -300,13 +313,13 @@ All new actors will use the N-queue system with default priority 0.
 ### Validation
 
 **Priority Validation:**
-```python
+```csharp
 if not isinstance(priority, int) or priority < 0:
     return False
 ```
 
 **Item Validation:**
-```python
+```csharp
 if not isinstance(item, dict):
     return False
 ```
@@ -339,7 +352,7 @@ INFO: Popped 5 total items for actor my-queue. Remaining counts: {'2': 1}
 
 **Run tests:**
 ```bash
-pytest tests/test_actor.py -v
+dotnet test
 ```
 
 ### Integration Tests
