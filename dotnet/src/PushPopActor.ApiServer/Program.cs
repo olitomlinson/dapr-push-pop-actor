@@ -14,11 +14,19 @@ builder.Services.AddSwaggerGen(c =>
     c.SwaggerDoc("v1", new() { Title = "Dapr Push-Pop Actor API (.NET)", Version = "v1" });
 });
 
-// Register actors
-builder.Services.AddActors(options =>
+// Register actors (conditionally based on environment variable)
+var registerActors = builder.Configuration.GetValue<bool>("REGISTER_ACTORS", true);
+if (registerActors)
 {
-    options.Actors.RegisterActor<PushPopActor.PushPopActor>();
-});
+    builder.Services.AddActors(options =>
+    {
+        options.Actors.RegisterActor<PushPopActor.PushPopActor>();
+
+        // Configure actor runtime settings
+        options.ActorIdleTimeout = TimeSpan.FromSeconds(60);
+    });
+}
+// No else needed - Dapr Client (from AddDapr) is sufficient for actor invocation
 
 var app = builder.Build();
 
@@ -35,8 +43,11 @@ app.UseAuthorization();
 // Map controllers
 app.MapControllers();
 
-// Map Dapr actor endpoints
-app.MapActorsHandlers();
+// Map Dapr actor endpoints (only needed when hosting actors)
+if (registerActors)
+{
+    app.MapActorsHandlers();
+}
 
 // Health check endpoint
 app.MapGet("/health", () => new { status = "healthy", service = "dapr-push-pop-actor-api-dotnet" });
