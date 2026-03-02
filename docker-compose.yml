@@ -59,27 +59,25 @@ services:
       - pushpop-network
 
   ############################
-  # API Server + Dapr Sidecar
+  # .NET API Server + Dapr Sidecar
   ############################
-  api-server:
+  dotnet-api-server:
     build:
-      context: .
+      context: ./dotnet
       dockerfile: Dockerfile
     environment:
-      - DAPR_GRPC_ENDPOINT=http://api-server-dapr:50001
-      - DAPR_HTTP_ENDPOINT=http://api-server-dapr:3500
+      - ASPNETCORE_URLS=http://+:8080
+      - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr:50003
+      - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr:3502
     ports:
-      - "8000:8000"
-    volumes:
-      - ./src:/app/src:delegated
-      - ./examples:/app/examples:delegated
+      - "8000:8080"
     depends_on:
-      api-server-dapr:
+      dotnet-api-server-dapr:
         condition: service_started
     networks:
       - pushpop-network
 
-  api-server-dapr:
+  dotnet-api-server-dapr:
     image: "${DAPR_RUNTIME_VERSION}"
     command:
       [
@@ -87,13 +85,13 @@ services:
         "-app-id",
         "push-pop-actor-service",
         "-app-channel-address",
-        "api-server",
+        "dotnet-api-server",
         "-app-port",
-        "8000",
+        "8080",
         "-dapr-http-port",
-        "3500",
+        "3502",
         "-dapr-grpc-port",
-        "50001",
+        "50003",
         "-placement-host-address",
         "placement:50005",
         "-scheduler-host-address",
@@ -109,8 +107,8 @@ services:
       - "./dapr/components:/components"
       - "./dapr/config:/dapr-config"
     ports:
-      - "3500:3500" # Dapr HTTP port for host access
-      - "50001:50001" # Dapr gRPC port for host access
+      - "3502:3502" # Dapr HTTP port for host access
+      - "50003:50003" # Dapr gRPC port for host access
     depends_on:
       postgres-db:
         condition: service_healthy
@@ -118,75 +116,7 @@ services:
         condition: service_started
     healthcheck:
       test:
-        ["CMD", "wget", "-q", "--spider", "http://localhost:3500/v1.0/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    networks:
-      - pushpop-network
-
-  ############################
-  # API Server 2 + Dapr Sidecar
-  ############################
-  api-server-2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    environment:
-      - DAPR_GRPC_ENDPOINT=http://api-server-dapr-2:50002
-      - DAPR_HTTP_ENDPOINT=http://api-server-dapr-2:3501
-    ports:
-      - "8001:8000"
-    volumes:
-      - ./src:/app/src:delegated
-      - ./examples:/app/examples:delegated
-    depends_on:
-      api-server-dapr-2:
-        condition: service_started
-    networks:
-      - pushpop-network
-
-  api-server-dapr-2:
-    image: "${DAPR_RUNTIME_VERSION}"
-    command:
-      [
-        "./daprd",
-        "-app-id",
-        "push-pop-actor-service",
-        "-app-channel-address",
-        "api-server-2",
-        "-app-port",
-        "8000",
-        "-dapr-http-port",
-        "3501",
-        "-dapr-grpc-port",
-        "50002",
-        "-placement-host-address",
-        "placement:50005",
-        "-scheduler-host-address",
-        "scheduler-0:50006",
-        "-resources-path",
-        "/components",
-        "-config",
-        "/dapr-config/config.yml",
-        "-log-level",
-        "info",
-      ]
-    volumes:
-      - "./dapr/components:/components"
-      - "./dapr/config:/dapr-config"
-    ports:
-      - "3501:3501" # Dapr HTTP port for host access
-      - "50002:50002" # Dapr gRPC port for host access
-    depends_on:
-      postgres-db:
-        condition: service_healthy
-      placement:
-        condition: service_started
-    healthcheck:
-      test:
-        ["CMD", "wget", "-q", "--spider", "http://localhost:3501/v1.0/healthz"]
+        ["CMD", "wget", "-q", "--spider", "http://localhost:3502/v1.0/healthz"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -231,7 +161,7 @@ services:
       context: ./load_tests
       dockerfile: Dockerfile
     command:
-      - "--host=http://api-server:8000"
+      - "--host=http://dotnet-api-server:8080"
       - "--web-host=0.0.0.0"
       - "--web-port=8089"
       - "--class-picker"
@@ -242,37 +172,38 @@ services:
     environment:
       - LOCUST_LOCUSTFILE=/home/locust/locustfile.py
       # Comma-separated list of target hosts for round-robin load balancing
-      - TARGET_HOSTS=http://api-server:8000,http://api-server-2:8000
+      - TARGET_HOSTS=http://dotnet-api-server:8080
       # Legacy single host env var (kept for backwards compatibility)
-      - TARGET_HOST=http://api-server:8000
+      - TARGET_HOST=http://dotnet-api-server:8080
     networks:
       - pushpop-network
 
-  ############################
-  # Locust Load Testing - Direct Actor Invocation
-  ############################
-  locust-direct:
-    build:
-      context: ./load_tests_direct
-      dockerfile: Dockerfile
-    container_name: locust-direct
-    command: ["locust", "--web-host=0.0.0.0", "--web-port=8089", "--class-picker"]
-    ports:
-      - "8090:8089"  # Different host port than API locust (8089)
-    volumes:
-      - ./load_tests_direct:/home/locust:delegated
-      - ./src:/app/src:ro  # Mount src for push_pop_actor import
-    environment:
-      - LOCUST_LOCUSTFILE=/home/locust/locustfile.py
-      - DAPR_RUNTIME_HOST=api-server-dapr  # Dapr sidecar hostname
-      - DAPR_HTTP_PORT=3500  # Dapr HTTP port
-      - DAPR_GRPC_PORT=50001  # Dapr gRPC port (for actor invocations)
-      - PYTHONPATH=/app/src  # Add /app/src to Python path for push_pop_actor import
-    depends_on:
-      - api-server-dapr
-      - placement
-    networks:
-      - pushpop-network
+  # ############################
+  # # Locust Load Testing - Direct Actor Invocation
+  # ############################
+  # locust-direct:
+  #   build:
+  #     context: ./load_tests_direct
+  #     dockerfile: Dockerfile
+  #   container_name: locust-direct
+  #   command:
+  #     ["locust", "--web-host=0.0.0.0", "--web-port=8089", "--class-picker"]
+  #   ports:
+  #     - "8090:8089" # Different host port than API locust (8089)
+  #   volumes:
+  #     - ./load_tests_direct:/home/locust:delegated
+  #     - ./src:/app/src:ro # Mount src for push_pop_actor import
+  #   environment:
+  #     - LOCUST_LOCUSTFILE=/home/locust/locustfile.py
+  #     - DAPR_RUNTIME_HOST=api-server-dapr # Dapr sidecar hostname
+  #     - DAPR_HTTP_PORT=3500 # Dapr HTTP port
+  #     - DAPR_GRPC_PORT=50001 # Dapr gRPC port (for actor invocations)
+  #     - PYTHONPATH=/app/src # Add /app/src to Python path for push_pop_actor import
+  #   depends_on:
+  #     #- api-server-dapr
+  #     - placement
+  #   networks:
+  #     - pushpop-network
 
 networks:
   pushpop-network:

@@ -34,29 +34,38 @@ curl -X POST http://localhost:8000/queue/my-queue/push \
 curl -X POST "http://localhost:8000/queue/my-queue/pop"
 ```
 
-### Install as Library
+### Install as NuGet Package
 
 ```bash
-pip install push-pop-actor
+dotnet add package PushPopActor
 ```
 
-```python
-from dapr.actor import ActorId, ActorProxy
-from push_pop_actor import PushPopActorInterface
+```csharp
+using Dapr.Actors;
+using Dapr.Actors.Client;
+using PushPopActor.Interfaces;
 
-# Create a queue
-proxy = ActorProxy.create(
-    actor_type="PushPopActor",
-    actor_id=ActorId("my-queue"),
-    actor_interface=PushPopActorInterface
-)
+// Create a queue
+var proxy = ActorProxy.Create<IPushPopActor>(
+    new ActorId("my-queue"),
+    "PushPopActor"
+);
 
-# Push items with priorities
-await proxy.Push({"item": {"task": "urgent"}, "priority": 0})    # High
-await proxy.Push({"item": {"task": "normal"}, "priority": 5})    # Low
+// Push items with priorities
+await proxy.Push(new PushRequest
+{
+    ItemJson = "{\"task\": \"urgent\"}",
+    Priority = 0
+}); // High
 
-# Pop single item (priority 0 comes first)
-items = await proxy.Pop()  # Returns list with 1 item or []
+await proxy.Push(new PushRequest
+{
+    ItemJson = "{\"task\": \"normal\"}",
+    Priority = 5
+}); // Low
+
+// Pop single item (priority 0 comes first)
+var result = await proxy.Pop();  // Returns PopResponse with items list
 ```
 
 **See [docs/QUICKSTART.md](docs/QUICKSTART.md) for complete setup instructions and examples.**
@@ -108,11 +117,6 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 - **Large queues** (10k+ items): Load max 100 items per operation (vs 10k in v3.x)
   - Example: 10,000 item queue uses ~10-50KB memory per operation (was 1-5MB)
 
-**Typical Performance:**
-- Small queues (<1000 items): Sub-millisecond in-memory operations
-- Large queues (>10k items): Constant-time operations regardless of queue size
-- Pop retrieves one item per call; call multiple times for bulk processing
-
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for optimization strategies.
 
 ## Documentation
@@ -124,7 +128,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for optimization strategies.
 
 ## Requirements
 
-- Python 3.11+
+- .NET 10.0+
 - Dapr 1.17.0+
 - A Dapr-supported state store (PostgreSQL, Redis, Cosmos DB, etc.)
 

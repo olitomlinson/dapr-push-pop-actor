@@ -5,7 +5,7 @@ Get up and running with Dapr PushPopActor in 5 minutes.
 ## Prerequisites
 
 - **Docker & Docker Compose** (for Docker mode)
-- **Python 3.11+** (for library mode)
+- **.NET 10.0+** (for library mode)
 - **Dapr CLI** (optional, for local development)
 
 ## Quick Start with Docker (Recommended)
@@ -55,58 +55,72 @@ curl -X POST "http://localhost:8000/queue/my-queue/pop"
 
 ## Quick Start as Library
 
-Use PushPopActor in your existing Python/Dapr application.
+Use PushPopActor in your existing .NET/Dapr application.
 
 ### 1. Install Package
 
 ```bash
-pip install push-pop-actor
+cd dotnet
+dotnet add package PushPopActor.Interfaces
+dotnet add package Dapr.Actors
 ```
 
 ### 2. Register Actor
 
-In your FastAPI app with Dapr:
+In your ASP.NET Core app with Dapr:
 
-```python
-from dapr.ext.fastapi import DaprActor
-from push_pop_actor import PushPopActor
+```csharp
+using Dapr.Actors.AspNetCore;
+using PushPopActor;
 
-app = FastAPI()
-actor_extension = DaprActor(app)
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddActors(options =>
+{
+    options.Actors.RegisterActor<PushPopActor>();
+});
 
-@app.on_event("startup")
-async def startup():
-    await actor_extension.register_actor(PushPopActor)
+var app = builder.Build();
+app.MapActorsHandlers();
+app.Run();
 ```
 
 ### 3. Use the Actor
 
-```python
-from dapr.actor import ActorId, ActorProxy
-from push_pop_actor import PushPopActorInterface
+```csharp
+using Dapr.Actors;
+using Dapr.Actors.Client;
+using PushPopActor.Interfaces;
 
-# Create proxy
-proxy = ActorProxy.create(
-    actor_type="PushPopActor",
-    actor_id=ActorId("my-queue"),
-    actor_interface=PushPopActorInterface
-)
+// Create proxy
+var proxy = ActorProxy.Create<IPushPopActor>(
+    new ActorId("my-queue"),
+    "PushPopActor"
+);
 
-# Push items
-await proxy.Push({"task": "send_email"})
+// Push items
+await proxy.Push(new PushRequest
+{
+    ItemJson = "{\"task\": \"send_email\"}",
+    Priority = 0
+});
 
-# Pop items
-items = await proxy.Pop(5)
+// Pop items
+var result = await proxy.Pop();
+foreach (var itemJson in result.ItemsJson)
+{
+    // Process item
+}
 ```
 
 ## Quick Start with Example API Server
 
 Run the included API server example.
 
-### 1. Install with API Extras
+### 1. Build the API Server
 
 ```bash
-pip install push-pop-actor[api]
+cd dotnet/src/PushPopActor.ApiServer
+dotnet build
 ```
 
 ### 2. Start Dapr Services
@@ -120,12 +134,13 @@ docker-compose up postgres-db placement
 ### 3. Run API Server
 
 ```bash
+cd dotnet/src/PushPopActor.ApiServer
 dapr run \
   --app-id push-pop-service \
-  --app-port 8000 \
-  --resources-path ./dapr/components \
-  --config ./dapr/config/config.yml \
-  -- dapr-push-pop-server
+  --app-port 5000 \
+  --resources-path ../../../dapr/components \
+  --config ../../../dapr/config/config.yml \
+  -- dotnet run
 ```
 
 ### 4. Test API
@@ -139,8 +154,8 @@ curl http://localhost:8000/health
 Run the test suite to verify everything works:
 
 ```bash
-pip install push-pop-actor[dev]
-pytest
+cd dotnet
+dotnet test
 ```
 
 ## Next Steps
@@ -176,13 +191,14 @@ ports:
 **Dapr SDK not found:**
 ```bash
 # Install latest Dapr SDK
-pip install --upgrade dapr dapr-ext-fastapi
+dotnet add package Dapr.Actors
+dotnet add package Dapr.AspNetCore
 ```
 
-**Import errors:**
+**Build errors:**
 ```bash
-# Ensure package is installed in editable mode
-pip install -e .
+# Restore NuGet packages
+dotnet restore
 ```
 
 ### Actor Registration Issues
@@ -225,18 +241,35 @@ curl -X POST "http://localhost:8000/queue/batch-queue/pop"
 
 ### Task Queue Pattern
 
-```python
-# Producer: Push tasks
-for task in tasks:
-    await proxy.Push({"task_id": task.id, "data": task.data})
+```csharp
+// Producer: Push tasks
+foreach (var task in tasks)
+{
+    await proxy.Push(new PushRequest
+    {
+        ItemJson = JsonSerializer.Serialize(new { task_id = task.Id, data = task.Data }),
+        Priority = 0
+    });
+}
 
-# Consumer: Pop and process
-while True:
-    items = await proxy.Pop(10)  # Process 10 at a time
-    for item in items:
-        await process_task(item)
-    if not items:
-        await asyncio.sleep(1)  # Wait for more tasks
+// Consumer: Pop and process
+while (true)
+{
+    var result = await proxy.Pop();
+    if (result.ItemsJson.Any())
+    {
+        foreach (var itemJson in result.ItemsJson)
+        {
+            // Process item
+            var item = JsonSerializer.Deserialize<dynamic>(itemJson);
+            await ProcessTaskAsync(item);
+        }
+    }
+    else
+    {
+        await Task.Delay(1000); // Wait for more tasks
+    }
+}
 ```
 
 ## Getting Help

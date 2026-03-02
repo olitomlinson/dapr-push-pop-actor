@@ -20,9 +20,9 @@ Each actor instance is uniquely identified by:
 - **Actor ID**: User-defined string (e.g., `"user-123-tasks"`, `"email-queue"`)
 
 Example: Two queues with different IDs are completely independent:
-```python
-queue_1 = ActorProxy.create("PushPopActor", ActorId("queue-1"), ...)
-queue_2 = ActorProxy.create("PushPopActor", ActorId("queue-2"), ...)
+```csharp
+var queue1 = ActorProxy.Create<IPushPopActor>(new ActorId("queue-1"), "PushPopActor");
+var queue2 = ActorProxy.Create<IPushPopActor>(new ActorId("queue-2"), "PushPopActor");
 ```
 
 ## State Management
@@ -55,7 +55,7 @@ Actor state is persisted in a Dapr state store component:
 Each actor uses a **segmented queue architecture** where priority queues are split into fixed-size segments (default: 100 items per segment):
 
 **Segment Keys**: `queue_0_seg_0`, `queue_0_seg_1`, `queue_1_seg_0`, etc.
-**Value**: JSON array of dictionaries (max 100 items per segment)
+**Value**: JSON array of strings (max 100 JSON items per segment)
 
 **Metadata Key**: `metadata`
 **Value**: JSON object with config and queue metadata including segment pointers
@@ -211,21 +211,27 @@ A segment is eligible for offload when:
 
 ### Activation
 
-When an actor is first accessed:
+When an actor is first accessed, metadata is initialized automatically through the `GetMetadataAsync()` helper:
 
-```python
-async def _on_activate(self) -> None:
-    """Initialize metadata with config if it doesn't exist."""
-    has_metadata, _ = await self._state_manager.try_get_state("metadata")
-    if not has_metadata:
-        await self._state_manager.set_state("metadata", {
-            "config": {
-                "segment_size": 100,
-                "buffer_segments": 1
-            },
-            "queues": {}
-        })
-        await self._state_manager.save_state()
+```csharp
+private async Task<Dictionary<string, object>> GetMetadataAsync()
+{
+    var result = await StateManager.TryGetStateAsync<Dictionary<string, object>>("metadata");
+    if (result.HasValue)
+    {
+        return result.Value;
+    }
+
+    return new Dictionary<string, object>
+    {
+        ["config"] = new Dictionary<string, object>
+        {
+            ["segment_size"] = MaxSegmentSize,
+            ["buffer_segments"] = 1
+        },
+        ["queues"] = new Dictionary<string, object>()
+    };
+}
 ```
 
 ### Deactivation
@@ -290,20 +296,21 @@ Dapr's placement service:
 
 ### 1. Direct Actor Invocation
 
-```python
-from dapr.actor import ActorProxy
+```csharp
+using Dapr.Actors.Client;
+using PushPopActor.Interfaces;
 
-proxy = ActorProxy.create(...)
-await proxy.Push(item)
+var proxy = ActorProxy.Create<IPushPopActor>(new ActorId("my-queue"), "PushPopActor");
+await proxy.Push(new PushRequest { ItemJson = itemJson, Priority = 0 });
 ```
 
 **Pros:**
 - Direct access, no HTTP overhead
-- Type-safe with ActorInterface
+- Type-safe with interface
 
 **Cons:**
 - Requires Dapr SDK
-- Python-only (or use language-specific SDK)
+- Language-specific (C#, Java, Python, etc.)
 
 ### 2. REST API
 
@@ -422,20 +429,19 @@ metadata:
 3. **Tune Buffer Segments**: Increase `buffer_segments` (2-5) for latency-sensitive applications
 4. **Monitor State Store**: Watch both actor state and offloaded segment storage
 5. **Pop Regularly**: While offloading handles large queues, regular consumption prevents unbounded growth
-6. **Handle Empty Queue**: Pop returns empty array, not error
+6. **Handle Empty Queue**: Pop returns empty list, not error
 7. **Idempotent Consumers**: Operations may be retried on failure
+8. **Use JsonSerializer**: Leverage System.Text.Json for consistent JSON serialization
 
 ## Limitations
 
 - **Not a Message Broker**: No pub/sub, routing, or dead letter queues
-- **Segmented Storage**: Max 100 items per segment (configurable via `segment_size`)
+- **Segmented Storage**: Max 100 items per segment (hardcoded in MaxSegmentSize constant)
 - **Memory Optimization**: With offloading enabled (v4.1+), only head, buffer, and tail segments kept in memory
 - **Priority-Based Ordering**: Items are FIFO within each priority level (0 = highest priority)
 - **No Transactions**: Push/Pop are separate operations
 - **State Store Dependency**: Requires configured Dapr state store
-- **Breaking Changes**:
-  - Segmented queues incompatible with pre-v4.0 state format
-  - Offloading backward compatible with v4.0+ (no breaking change)
+- **Language**: C# implementation only (.NET 10.0+)
 
 ## Further Reading
 

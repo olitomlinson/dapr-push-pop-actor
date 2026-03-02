@@ -332,7 +332,7 @@ WARNING: Failed to offload segment 3 for priority 0 (actor user-queue-123): conn
 ### Implementation Details
 
 **Helper Methods**:
-```python
+```csharp
 _get_offloaded_segment_key(priority, segment_num)           # Generate state store key
 _get_buffer_segments(metadata)                              # Get configured buffer size
 _get_offloaded_range(metadata, priority)                    # Get offloaded range (head, tail)
@@ -407,7 +407,7 @@ State keys in store: offloaded_queue_0_seg_2_actor_id ... offloaded_queue_0_seg_
 
 **No API changes** - segmentation is fully transparent:
 
-```python
+```csharp
 # Push works exactly the same
 await actor.Push({"item": {"data": "value"}, "priority": 0})
 
@@ -421,8 +421,8 @@ The only visible change is in the state store - segments are created/deleted aut
 
 ### Example 1: Basic Usage (Transparent)
 
-```python
-from push_pop_actor import PushPopActor
+```csharp
+using PushPopActor;
 
 # Push 150 items - creates 2 segments automatically
 for i in range(150):
@@ -436,7 +436,7 @@ for _ in range(150):
 
 ### Example 2: Large Queue
 
-```python
+```csharp
 # Push 1000 items - creates 10 segments
 for i in range(1000):
     await actor.Push({"item": {"task_id": i}, "priority": 0})
@@ -448,7 +448,7 @@ for i in range(1000):
 
 ### Example 3: Multiple Priorities with Segments
 
-```python
+```csharp
 # Each priority has independent segment numbering
 for i in range(150):
     await actor.Push({"item": {"id": i}, "priority": 0})  # queue_0_seg_0, queue_0_seg_1
@@ -617,7 +617,7 @@ To rollback to v3.x:
 
 ### Helper Methods
 
-```python
+```csharp
 _get_segment_key(priority, segment)  # Build segment key
 _get_segment_size(metadata)          # Get configured size
 _get_head_segment(metadata, priority)  # Get head pointer
@@ -655,8 +655,8 @@ Comprehensive test coverage including:
 
 **Run tests**:
 ```bash
-pytest tests/test_actor.py -v
-pytest tests/test_actor.py -k "segment" -v  # Segment-specific tests
+dotnet test
+dotnet test --filter "FullyQualifiedName~Segment"  # Segment-specific tests
 ```
 
 ### Integration Tests

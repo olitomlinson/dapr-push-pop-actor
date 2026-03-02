@@ -2,38 +2,44 @@
 
 ## Project Overview
 
-**push-pop-actor** is a Python library providing a simple FIFO queue-based Dapr actor for storing and retrieving dictionaries. It's designed for lightweight message queuing, task scheduling, and ordered processing in Dapr applications.
+**push-pop-actor** is a C# library providing a simple FIFO queue-based Dapr actor for storing and retrieving JSON-serialized data. It's designed for lightweight message queuing, task scheduling, and ordered processing in Dapr applications.
 
-- **Package Name**: `push-pop-actor` (PyPI/pip)
-- **Python Module**: `push_pop_actor` (import name)
+- **Package Name**: `PushPopActor` (NuGet)
+- **C# Namespaces**: `PushPopActor`, `PushPopActor.Interfaces`, `PushPopActor.ApiServer`
 - **GitHub**: https://github.com/olitomlinson/dapr-push-pop-actor
-- **Python**: 3.11+
+- **.NET**: 10.0+
 - **Dapr**: 1.17.0+
 
 ## Project Structure
 
 ```
 .
-├── src/push_pop_actor/          # Main package source
-│   ├── __init__.py              # Exports PushPopActor, PushPopActorInterface
-│   └── actor.py                 # Core actor implementation
-├── examples/
-│   ├── direct_usage.py          # Direct actor invocation example
-│   ├── api_server/              # FastAPI server example
-│   │   └── main.py              # REST API with actor registration
-│   └── curl_examples.sh         # API testing script
-├── tests/
-│   └── test_actor.py            # Unit tests with mocked state manager
+├── dotnet/
+│   ├── src/
+│   │   ├── PushPopActor/                    # Main actor implementation
+│   │   │   ├── PushPopActor.cs              # Core actor class
+│   │   │   └── PushPopActor.csproj          # Project file
+│   │   ├── PushPopActor.Interfaces/         # Actor interfaces and models
+│   │   │   ├── IPushPopActor.cs             # Actor interface definition
+│   │   │   ├── Models.cs                    # Request/Response models
+│   │   │   └── PushPopActor.Interfaces.csproj
+│   │   └── PushPopActor.ApiServer/          # ASP.NET Core API server
+│   │       ├── Program.cs                   # API server entry point
+│   │       ├── Controllers/QueueController.cs # REST API endpoints
+│   │       └── PushPopActor.ApiServer.csproj
+│   └── tests/
+│       └── PushPopActor.Tests/              # Unit tests
+│           ├── PushPopActorTests.cs         # xUnit tests
+│           └── PushPopActor.Tests.csproj
+├── load_tests/                              # Locust load testing (Python)
 ├── docs/
-│   ├── QUICKSTART.md            # Getting started guide
-│   ├── ARCHITECTURE.md          # Design details
-│   └── API_REFERENCE.md         # Complete API docs
+│   ├── QUICKSTART.md                        # Getting started guide
+│   ├── ARCHITECTURE.md                      # Design details
+│   └── API_REFERENCE.md                     # Complete API docs
 ├── dapr/
-│   ├── components/              # Dapr component configs (state store)
-│   └── config/                  # Dapr runtime config
-├── pyproject.toml               # Package configuration
-├── docker-compose.yml           # Full stack (PostgreSQL, Dapr, API)
-└── Dockerfile                   # API server container
+│   ├── components/                          # Dapr component configs (state store)
+│   └── config/                              # Dapr runtime config
+└── docker-compose.yml                       # Full stack (PostgreSQL, Dapr, API)
 
 ```
 
@@ -41,12 +47,14 @@
 
 ### Actor Interface
 
-```python
-from push_pop_actor import PushPopActor, PushPopActorInterface
+```csharp
+using PushPopActor.Interfaces;
 
-# Two methods only:
-async def Push(self, item: dict) -> bool    # Add to end (FIFO)
-async def Pop(self) -> list                  # Remove single item from front
+// Main methods:
+Task<PushResponse> Push(PushRequest request);           // Add to end (FIFO)
+Task<PopResponse> Pop();                                // Remove single item from front
+Task<PopWithAckResponse> PopWithAck(PopWithAckRequest); // Pop with acknowledgement
+Task<AcknowledgeResponse> Acknowledge(AcknowledgeRequest); // Acknowledge popped items
 ```
 
 ### Usage Modes
@@ -57,38 +65,41 @@ async def Pop(self) -> list                  # Remove single item from front
 
 ## Key Files
 
-- **[src/push_pop_actor/actor.py](src/push_pop_actor/actor.py)**: Core `PushPopActor` implementation
-- **[pyproject.toml](pyproject.toml)**: Package metadata, dependencies, scripts
-- **[examples/api_server/main.py](examples/api_server/main.py)**: Reference FastAPI implementation
-- **[tests/test_actor.py](tests/test_actor.py)**: Comprehensive unit tests
+- **[dotnet/src/PushPopActor/PushPopActor.cs](dotnet/src/PushPopActor/PushPopActor.cs)**: Core `PushPopActor` implementation
+- **[dotnet/src/PushPopActor.Interfaces/IPushPopActor.cs](dotnet/src/PushPopActor.Interfaces/IPushPopActor.cs)**: Actor interface definition
+- **[dotnet/src/PushPopActor.Interfaces/Models.cs](dotnet/src/PushPopActor.Interfaces/Models.cs)**: Request/Response models
+- **[dotnet/src/PushPopActor.ApiServer/Program.cs](dotnet/src/PushPopActor.ApiServer/Program.cs)**: ASP.NET Core API server
+- **[dotnet/src/PushPopActor.ApiServer/Controllers/QueueController.cs](dotnet/src/PushPopActor.ApiServer/Controllers/QueueController.cs)**: REST API endpoints
+- **[dotnet/tests/PushPopActor.Tests/PushPopActorTests.cs](dotnet/tests/PushPopActor.Tests/PushPopActorTests.cs)**: Comprehensive unit tests
 
 ## Technology Stack
 
-- **Dapr SDK**: `dapr>=1.17.0rc5`, `dapr-ext-fastapi>=1.17.0rc5`
-- **Web Framework**: FastAPI + Uvicorn (optional, for API mode)
-- **Testing**: pytest, pytest-asyncio, pytest-cov
-- **Linting**: black, ruff, mypy
+- **Dapr SDK**: `Dapr.Actors`, `Dapr.AspNetCore`, `Dapr.Client`
+- **Web Framework**: ASP.NET Core 10.0 (for API mode)
+- **Testing**: xUnit, Moq
+- **Language**: C# 13 with .NET 10.0
 
 ## Common Commands
 
 ```bash
-# Install
-pip install -e "."                          # Base install
-pip install -e ".[api]"                     # With API extras
-pip install -e ".[dev]"                     # With dev tools
+# Build
+cd dotnet
+dotnet build                                # Build all projects
+dotnet build src/PushPopActor              # Build actor library
 
 # Test
-pytest                                      # Run tests
-pytest --cov=src/push_pop_actor            # With coverage
+dotnet test                                 # Run all tests
+dotnet test --logger "console;verbosity=detailed"  # Verbose output
 
-# Lint
-black src/ tests/ examples/                # Format
-ruff check src/ tests/ examples/           # Lint
-mypy src/                                  # Type check
+# Run API Server
+cd src/PushPopActor.ApiServer
+dapr run --app-id push-pop-api \
+  --app-port 5000 \
+  --resources-path ../../dapr/components \
+  -- dotnet run
 
-# Run
+# Docker
 docker-compose up                          # Full stack
-dapr-push-pop-server --host 0.0.0.0        # API server only
 ```
 
 ## Architecture Notes
@@ -103,7 +114,7 @@ dapr-push-pop-server --host 0.0.0.0        # API server only
 - **Segmented storage**: Queues split into 100-item segments for performance
 - State keys: `queue_0_seg_0`, `queue_0_seg_1`, etc. (priority + segment number)
 - Metadata tracks: `head_segment` (pop from), `tail_segment` (push to), `count`
-- Format: `List[dict]` per segment (max 100 items each)
+- Format: `List<string>` per segment (max 100 JSON items each)
 - Push appends to tail segment, allocates new segment when full (100 items)
 - Pop removes from head segment, deletes empty segments automatically
 - State saved after every operation
@@ -117,38 +128,39 @@ dapr-push-pop-server --host 0.0.0.0        # API server only
 ## Development Conventions
 
 ### Code Style
-- Line length: 100 characters
-- Target: Python 3.11+
-- Type hints: Optional (mypy strict mode disabled)
-- Async/await: All actor methods are async
+- Language: C# 13 with .NET 10.0
+- Nullable reference types: Enabled
+- Async/await: All actor methods are async Tasks
 
 ### Testing
-- Mock `_state_manager` to avoid Dapr runtime dependency
+- Framework: xUnit
+- Mocking: Moq for IActorStateManager
 - Coverage target: >95%
-- Test file naming: `test_*.py`
+- Test file naming: `*Tests.cs`
 
-### Import Patterns
-```python
-# External imports
-from dapr.actor import ActorId, ActorProxy
-from dapr.ext.fastapi import DaprActor
+### Namespace Patterns
+```csharp
+// External imports
+using Dapr.Actors;
+using Dapr.Actors.Runtime;
+using Dapr.Client;
 
-# Internal imports
-from push_pop_actor import PushPopActor, PushPopActorInterface
+// Internal imports
+using PushPopActor.Interfaces;
 ```
 
 ## Important Notes
 
-1. **Package vs Module Naming**:
-   - PyPI package: `push-pop-actor` (hyphenated)
-   - Python module: `push_pop_actor` (underscored)
-   - GitHub repo: `dapr-push-pop-actor` (includes "dapr-" prefix)
+1. **Package Naming**:
+   - NuGet package: `PushPopActor`
+   - C# namespaces: `PushPopActor`, `PushPopActor.Interfaces`
+   - GitHub repo: `dapr-push-pop-actor`
 
 2. **Actor Registration**: Must register `PushPopActor` before creating proxies
 
-3. **Item Validation**: Push only accepts JSON-serializable dicts
+3. **Item Format**: Push accepts JSON strings (ItemJson property)
 
-4. **FIFO Guarantee**: Items always returned in insertion order
+4. **FIFO Guarantee**: Items always returned in insertion order within priority
 
 5. **Concurrency**: One operation per actor instance at a time
 
@@ -177,5 +189,5 @@ from push_pop_actor import PushPopActor, PushPopActorInterface
 ## Quick Reference Links
 
 - Dapr Docs: https://docs.dapr.io/
-- Dapr Python SDK: https://github.com/dapr/python-sdk
+- Dapr .NET SDK: https://github.com/dapr/dotnet-sdk
 - Project Issues: https://github.com/olitomlinson/dapr-push-pop-actor/issues

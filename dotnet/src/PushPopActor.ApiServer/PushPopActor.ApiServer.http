@@ -1,0 +1,6 @@
+@PushPopActor.ApiServer_HostAddress = http://localhost:5066
+
+GET {{PushPopActor.ApiServer_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

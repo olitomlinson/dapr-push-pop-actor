@@ -1,16 +1,18 @@
 # Load Testing for Push-Pop Actor
 
-Comprehensive load testing framework for benchmarking real-world latencies and performance characteristics of the push-pop-actor queue system.
+Comprehensive load testing framework for benchmarking real-world latencies and performance characteristics of the push-pop-actor queue system. Tests are written in Python using Locust to test the C# API implementation.
 
 ## Overview
 
-This framework uses [Locust](https://locust.io/) to measure:
+This framework uses [Locust](https://locust.io/) (Python-based load testing tool) to measure the C# API implementation:
 - **Latency metrics** (p50, p95, p99) for push/pop operations
 - **Throughput** (requests/sec, items/sec)
 - **Error rates** under various load conditions
 - **Queue size impact** on performance
 - **Priority queue performance**
 - **Resource utilization** (CPU, memory, database)
+
+**Note:** While the Locust tests are written in Python, they test the C# ASP.NET Core API server implementation via HTTP endpoints.
 
 ## Quick Start
 
@@ -573,11 +575,11 @@ jobs:
 ```
 load_tests/
 ├── README.md                   # This file (comprehensive docs)
-├── requirements.txt            # Python dependencies
+├── requirements.txt            # Python dependencies (Locust, etc.)
 ├── Dockerfile                  # Locust container image
 ├── locustfile.py              # Entry point (imports scenarios)
 │
-├── scenarios/                 # Test scenario implementations
+├── scenarios/                 # Test scenario implementations (Python)
 │   ├── base.py                # ✅ Base user class with custom metrics
 │   ├── s1_push_only.py        # ⏳ Push-only workload
 │   ├── s2_pop_only.py         # ⏳ Pop-only workload (requires prepopulator)
@@ -587,7 +589,7 @@ load_tests/
 │   ├── s6_burst.py            # ⏳ Burst traffic patterns
 │   └── s7_failure.py          # ⏳ Failure/error scenarios
 │
-├── utils/                     # Utility modules
+├── utils/                     # Utility modules (Python)
 │   ├── queue_prepopulator.py  # ⏳ Bulk queue loading (Priority 1)
 │   ├── resource_monitor.py    # ⏳ System metrics collector (Priority 2)
 │   └── metrics.py             # ⏳ Custom metric definitions
@@ -603,6 +605,8 @@ load_tests/
     └── {test_run}_*.csv       # Per-run results
 
 Legend: ✅ Implemented | ⏳ To be implemented
+
+Note: All test scenarios are written in Python using Locust, but test the C# API server.
 ```
 
 ## Scenario Quick Reference
