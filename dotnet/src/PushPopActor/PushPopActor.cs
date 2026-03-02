@@ -149,6 +149,17 @@ public class PushPopActor : Actor, IPushPopActor
     /// </summary>
     public async Task<PopResponse> Pop()
     {
+        var (response, _) = await PopWithPriorityAsync();
+        await StateManager.SaveStateAsync();  // Commit the staged changes atomically
+        return response;
+    }
+
+    /// <summary>
+    /// Internal Pop method that returns both the response and the priority from which the item was popped.
+    /// This is used by PopWithAck to track the original priority for expired lock restoration.
+    /// </summary>
+    private async Task<(PopResponse response, int priority)> PopWithPriorityAsync()
+    {
         try
         {
             // Check if queue is locked
@@ -162,7 +173,7 @@ public class PushPopActor : Actor, IPushPopActor
                 if (now < expiresAt)
                 {
                     Logger.LogInformation("Queue is locked, cannot pop");
-                    return new PopResponse { ItemsJson = new List<string>() };
+                    return (new PopResponse { ItemsJson = new List<string>() }, -1);
                 }
                 else
                 {
@@ -175,7 +186,7 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (!metadata.ContainsKey("queues"))
             {
-                return new PopResponse { ItemsJson = new List<string>() };
+                return (new PopResponse { ItemsJson = new List<string>() }, -1);
             }
 
             // Handle both Dictionary<string, object> and JsonElement for queues
@@ -193,7 +204,7 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (queues == null || queues.Count == 0)
             {
-                return new PopResponse { ItemsJson = new List<string>() };
+                return (new PopResponse { ItemsJson = new List<string>() }, -1);
             }
 
             // Find lowest priority with items
@@ -240,7 +251,6 @@ public class PushPopActor : Actor, IPushPopActor
                     queues.Remove(priority.ToString());
                     metadata["queues"] = queues;
                     await SaveMetadataAsync(metadata);
-                    await StateManager.SaveStateAsync();
                     continue;
                 }
 
@@ -266,12 +276,11 @@ public class PushPopActor : Actor, IPushPopActor
                         queues[priority.ToString()] = queueMeta;
                         metadata["queues"] = queues;
                         await SaveMetadataAsync(metadata);
-                        await StateManager.SaveStateAsync();
 
                         Logger.LogInformation($"Popped item from priority {priority}, count now {count}");
 
-                        // Return item JSON string directly
-                        return new PopResponse { ItemsJson = new List<string> { itemJson } };
+                        // Return item JSON string directly with priority
+                        return (new PopResponse { ItemsJson = new List<string> { itemJson } }, priority);
                     }
                     else
                     {
@@ -282,12 +291,11 @@ public class PushPopActor : Actor, IPushPopActor
                         queues.Remove(priority.ToString());
                         metadata["queues"] = queues;
                         await SaveMetadataAsync(metadata);
-                        await StateManager.SaveStateAsync();
 
                         Logger.LogInformation($"Popped last item from priority {priority}, queue now empty");
 
-                        // Return item JSON string directly
-                        return new PopResponse { ItemsJson = new List<string> { itemJson } };
+                        // Return item JSON string directly with priority
+                        return (new PopResponse { ItemsJson = new List<string> { itemJson } }, priority);
                     }
                 }
                 else
@@ -301,21 +309,20 @@ public class PushPopActor : Actor, IPushPopActor
                     queues[priority.ToString()] = queueMeta;
                     metadata["queues"] = queues;
                     await SaveMetadataAsync(metadata);
-                    await StateManager.SaveStateAsync();
 
                     Logger.LogInformation($"Popped item from priority {priority}, count now {count}");
 
-                    // Return item JSON string directly
-                    return new PopResponse { ItemsJson = new List<string> { itemJson } };
+                    // Return item JSON string directly with priority
+                    return (new PopResponse { ItemsJson = new List<string> { itemJson } }, priority);
                 }
             }
 
-            return new PopResponse { ItemsJson = new List<string>() };
+            return (new PopResponse { ItemsJson = new List<string>() }, -1);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in PopAsync");
-            return new PopResponse { ItemsJson = new List<string>() };
+            return (new PopResponse { ItemsJson = new List<string>() }, -1);
         }
     }
 
@@ -350,21 +357,34 @@ public class PushPopActor : Actor, IPushPopActor
         // Return items to queue and clear lock
         Logger.LogInformation("Lock expired, returning items to queue");
 
+        // Restore original priority (or default to 1 for old locks without priority tracking)
+        int originalPriority = lockData.ContainsKey("priority")
+            ? Convert.ToInt32(lockData["priority"])
+            : 1;  // Fallback to new default for old locks created before priority tracking
+
         if (lockData.ContainsKey("items_json"))
         {
-            var itemsJson = lockData["items_json"] as List<object>;
+            // Try both List<string> and List<object> for compatibility
+            List<string>? itemsJson = null;
+
+            if (lockData["items_json"] is List<string> stringList)
+            {
+                itemsJson = stringList;
+            }
+            else if (lockData["items_json"] is List<object> objList)
+            {
+                itemsJson = objList.Select(item => item.ToString()).Where(s => s != null).ToList()!;
+            }
+
             if (itemsJson != null)
             {
-                foreach (var itemJson in itemsJson)
+                foreach (var jsonString in itemsJson)
                 {
-                    if (itemJson is string jsonString)
+                    await Push(new PushRequest
                     {
-                        await Push(new PushRequest
-                        {
-                            ItemJson = jsonString,
-                            Priority = 0
-                        });
-                    }
+                        ItemJson = jsonString,
+                        Priority = originalPriority  // Restore original priority
+                    });
                 }
             }
         }
@@ -409,8 +429,8 @@ public class PushPopActor : Actor, IPushPopActor
                 }
             }
 
-            // Pop items (just one for now)
-            var popResult = await Pop();
+            // Pop items (just one for now) and track priority
+            var (popResult, poppedPriority) = await PopWithPriorityAsync();
 
             if (popResult.ItemsJson.Count == 0)
             {
@@ -434,7 +454,8 @@ public class PushPopActor : Actor, IPushPopActor
                 ["created_at"] = nowUnix,
                 ["expires_at"] = lockExpiresAt,
                 ["items_json"] = popResult.ItemsJson,
-                ["count"] = popResult.ItemsJson.Count
+                ["count"] = popResult.ItemsJson.Count,
+                ["priority"] = poppedPriority  // Track original priority for restoration
             };
 
             await StateManager.SetStateAsync("_active_lock", lockData);

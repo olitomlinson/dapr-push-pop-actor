@@ -203,7 +203,7 @@ public class QueueController : ControllerBase
 // Request/Response models for API endpoints
 public record ApiPushRequest(
     JsonElement Item,
-    int Priority = 0
+    int Priority = 1
 );
 
 public record ApiAcknowledgeRequest(

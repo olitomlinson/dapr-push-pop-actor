@@ -449,7 +449,7 @@ if (lockData.ContainsKey("items_json"))
             await Push(new PushRequest
             {
                 ItemJson = jsonString,
-                Priority = 0  // Default priority for expired items
+                Priority = originalPriority  // Restore original priority from lock metadata
             });
         }
     }

@@ -109,7 +109,7 @@ Example state for actor "my-queue" with 250 items in priority 0:
 ### State Operations
 
 **Push Operation:**
-1. Extract item and priority from request (default priority: 0)
+1. Extract item and priority from request (default priority: 1; priority 0 reserved for urgent items)
 2. Load metadata and get tail segment number for priority
 3. Load tail segment (e.g., `queue_0_seg_2`) from state store
 4. If segment is full (100 items), allocate new segment (increment tail pointer)

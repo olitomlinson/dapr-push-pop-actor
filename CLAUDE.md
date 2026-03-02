@@ -160,11 +160,13 @@ using PushPopActor.Interfaces;
 
 3. **Item Format**: Push accepts JSON strings (ItemJson property)
 
-4. **FIFO Guarantee**: Items always returned in insertion order within priority
+4. **Priority System**: Default priority is 1. Priority 0 is reserved as a "fast lane" for urgent items that need to interrupt normal processing. Lower priority numbers are processed first (0 before 1 before 2, etc.).
 
-5. **Concurrency**: One operation per actor instance at a time
+5. **FIFO Guarantee**: Items always returned in insertion order within priority
 
-6. **Direct Actor API Access**: You can interact directly with actors via Dapr's HTTP API for testing and debugging. This allows you to invoke actor methods and inspect state without going through the application's REST API:
+6. **Concurrency**: One operation per actor instance at a time
+
+7. **Direct Actor API Access**: You can interact directly with actors via Dapr's HTTP API for testing and debugging. This allows you to invoke actor methods and inspect state without going through the application's REST API:
    ```bash
    # Invoke actor method directly
    curl -X POST http://localhost:3500/v1.0/actors/PushPopActor/my-queue/method/Push \

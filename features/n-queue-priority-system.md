@@ -70,7 +70,7 @@ Task<PushResponse> Push(PushRequest request)
 **Parameters:**
 - `request` (PushRequest): Contains:
   - `ItemJson` (string): JSON string to push onto the queue
-  - `Priority` (int, optional): Priority level (0 = highest priority, 1, 2, ...). Default: 0
+  - `Priority` (int, optional): Priority level (0 = highest priority, 1, 2, ...). Default: 1
 
 **Returns:**
 - `PushResponse`: Contains `Success` (bool) - true if successful, false otherwise
@@ -100,11 +100,11 @@ response = await actor.Push(new PushRequest
     Priority = 5
 });
 
-// Push with default priority (0)
+// Push with default priority (1)
 response = await actor.Push(new PushRequest
 {
-    ItemJson = "{\"task\": \"important_task\"}",
-    Priority = 0
+    ItemJson = "{\"task\": \"normal_task\"}"
+    // Priority not specified - defaults to 1
 });
 ```
 
@@ -209,7 +209,7 @@ curl -X POST "http://localhost:8000/queue/my-queue/pop"
 ### 1. Default Priority
 **Scenario:** Push without specifying priority
 ```csharp
-await actor.Push({"item": {"data": "value"}})  # Defaults to priority 0
+await actor.Push({"item": {"data": "value"}})  # Defaults to priority 1 (priority 0 reserved for urgent items)
 ```
 
 ### 2. Sparse Priorities
@@ -296,7 +296,7 @@ If migrating from old single-queue system:
 
 ### Future Actors
 
-All new actors will use the N-queue system with default priority 0.
+All new actors will use the N-queue system with default priority 1 (priority 0 reserved as a fast lane for urgent items).
 
 ## Implementation Details
 

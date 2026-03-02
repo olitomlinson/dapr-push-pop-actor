@@ -15,10 +15,10 @@ public class PushRequest
     public string ItemJson { get; set; } = string.Empty;
 
     /// <summary>
-    /// Priority level (0 = highest priority).
+    /// Priority level (0 = highest priority, default: 1).
     /// </summary>
     [DataMember]
-    public int Priority { get; set; } = 0;
+    public int Priority { get; set; } = 1;
 }
 
 /// <summary>

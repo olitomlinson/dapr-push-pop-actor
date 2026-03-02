@@ -25,7 +25,7 @@ Task<PushResponse> Push(PushRequest request)
 **Parameters:**
 - `request` (PushRequest): Contains:
   - `ItemJson` (string): JSON string to push onto the queue
-  - `Priority` (int): Priority level (default: 0, must be >= 0)
+  - `Priority` (int): Priority level (0 = highest, default: 1, must be >= 0)
 
 **Returns:**
 - `PushResponse`: Contains:

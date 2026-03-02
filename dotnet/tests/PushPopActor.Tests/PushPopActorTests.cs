@@ -255,4 +255,83 @@ public class PushPopActorTests
         Assert.Single(result.ItemsJson);
         Assert.Equal(original, result.ItemsJson[0]);
     }
+
+    [Fact]
+    public async Task Push_WithoutExplicitPriority_UsesDefaultPriorityOne()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = CreateActor(mockStateManager);
+        var request = new Interfaces.PushRequest { ItemJson = "{\"test\":\"data\"}" };
+        // Priority not explicitly set - should default to 1
+
+        // Act
+        await actor.Push(request);
+
+        // Assert - verify it went to priority 1 queue by checking metadata
+        var metadataState = await mockStateManager.Object.TryGetStateAsync<Dictionary<string, object>>("metadata", CancellationToken.None);
+        Assert.True(metadataState.HasValue);
+        var metadata = metadataState.Value;
+        Assert.True(metadata.ContainsKey("queues"));
+
+        var queues = metadata["queues"] as Dictionary<string, object>;
+        Assert.NotNull(queues);
+        Assert.True(queues.ContainsKey("1"), "Item should be in priority 1 queue");
+        Assert.False(queues.ContainsKey("0"), "Item should NOT be in priority 0 queue");
+    }
+
+    [Fact]
+    public async Task ExpiredLock_RestoresOriginalPriority()
+    {
+        // Arrange - push items at different priorities
+        var mockStateManager = CreateMockStateManager();
+        var actor = CreateActor(mockStateManager);
+
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 2 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":2}", Priority = 1 });
+
+        // PopWithAck with 1 second TTL (will pop priority 1 item first)
+        var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 1 });
+        Assert.Single(popResult.ItemsJson);
+        Assert.Contains("\"id\":2", popResult.ItemsJson.First());
+
+        // Wait for lock to expire
+        await Task.Delay(1100);
+
+        // Pop again - should get same item (re-pushed with priority 1, not priority 0)
+        var secondPop = await actor.Pop();
+        Assert.Single(secondPop.ItemsJson);
+        Assert.Contains("\"id\":2", secondPop.ItemsJson.First());
+
+        // Final pop gets priority 2 item (proving order was preserved)
+        var thirdPop = await actor.Pop();
+        Assert.Single(thirdPop.ItemsJson);
+        Assert.Contains("\"id\":1", thirdPop.ItemsJson.First());
+
+        // Queue should now be empty
+        var fourthPop = await actor.Pop();
+        Assert.Empty(fourthPop.ItemsJson);
+    }
+
+    [Fact]
+    public async Task PopWithAck_CommitsAtomically()
+    {
+        // Arrange - push single item
+        var mockStateManager = CreateMockStateManager();
+        var actor = CreateActor(mockStateManager);
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+
+        // Act - PopWithAck should commit both pop and lock atomically
+        var result = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
+
+        // Assert - item is locked (not in queue)
+        Assert.Single(result.ItemsJson);
+        Assert.True(result.Locked);
+        Assert.NotNull(result.LockId);
+        Assert.Contains("\"id\":1", result.ItemsJson.First());
+
+        // Verify queue is empty (item was removed atomically with lock creation)
+        var popResult = await actor.Pop();
+        Assert.Empty(popResult.ItemsJson);
+    }
 }
