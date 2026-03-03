@@ -340,17 +340,234 @@ public class PushPopActorTests
         var actor = await CreateActorAsync(mockStateManager);
         await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
 
-        // Act - PopWithAck should commit both pop and lock atomically
+        // Act - PopWithAck should commit lock atomically
         var result = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
 
-        // Assert - item is locked (not in queue)
+        // Assert - item is locked and peeked (still in queue with lock-in-place)
         Assert.Single(result.ItemsJson);
         Assert.True(result.Locked);
         Assert.NotNull(result.LockId);
         Assert.Contains("\"id\":1", result.ItemsJson.First());
 
-        // Verify queue is empty (item was removed atomically with lock creation)
+        // Verify queue is blocked while lock exists (cannot pop)
         var popResult = await actor.Pop();
         Assert.Empty(popResult.ItemsJson);
+
+        // After acknowledgement, queue should be empty
+        var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = result.LockId });
+        Assert.True(ackResult.Success);
+        Assert.Equal(1, ackResult.ItemsAcknowledged);
+
+        // Now pop should return empty
+        var finalPop = await actor.Pop();
+        Assert.Empty(finalPop.ItemsJson);
+    }
+
+    [Fact]
+    public async Task ExpiredLock_PreservesQueuePosition()
+    {
+        // Arrange - push items
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"A\"}", Priority = 1 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"B\"}", Priority = 1 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"C\"}", Priority = 1 });
+
+        // Act - PopWithAck locks Item-A
+        var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 1 });
+        Assert.Single(popResult.ItemsJson);
+        Assert.Contains("\"id\":\"A\"", popResult.ItemsJson.First());
+
+        // Push Item-D while lock is active
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"D\"}", Priority = 1 });
+
+        // Wait for lock to expire
+        await Task.Delay(1100);
+
+        // Assert - Pop should return Item-A (preserved position at front)
+        var firstPop = await actor.Pop();
+        Assert.Single(firstPop.ItemsJson);
+        Assert.Contains("\"id\":\"A\"", firstPop.ItemsJson.First());
+
+        // Remaining pops should return B, C, D in order
+        var secondPop = await actor.Pop();
+        Assert.Contains("\"id\":\"B\"", secondPop.ItemsJson.First());
+
+        var thirdPop = await actor.Pop();
+        Assert.Contains("\"id\":\"C\"", thirdPop.ItemsJson.First());
+
+        var fourthPop = await actor.Pop();
+        Assert.Contains("\"id\":\"D\"", fourthPop.ItemsJson.First());
+
+        // Queue should now be empty
+        var fifthPop = await actor.Pop();
+        Assert.Empty(fifthPop.ItemsJson);
+    }
+
+    [Fact]
+    public async Task PopWithAck_ItemsStayInQueueUntilAck()
+    {
+        // Arrange - push item
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"test\"}", Priority = 1 });
+
+        // Act - PopWithAck locks the item
+        var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
+        Assert.Single(popResult.ItemsJson);
+        var lockId = popResult.LockId;
+
+        // Assert - Pop returns empty while lock exists (item still in queue but locked)
+        var blockedPop = await actor.Pop();
+        Assert.Empty(blockedPop.ItemsJson);
+
+        // Acknowledge the lock
+        var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = lockId });
+        Assert.True(ackResult.Success);
+
+        // Now queue should be truly empty (item dequeued on acknowledgement)
+        var finalPop = await actor.Pop();
+        Assert.Empty(finalPop.ItemsJson);
+    }
+
+    [Fact]
+    public async Task Acknowledge_RemovesItemsFromQueue()
+    {
+        // Arrange - push multiple items
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":2}", Priority = 1 });
+
+        // Act - PopWithAck first item
+        var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
+        Assert.Contains("\"id\":1", popResult.ItemsJson.First());
+        var lockId = popResult.LockId;
+
+        // Acknowledge
+        var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = lockId });
+        Assert.True(ackResult.Success);
+        Assert.Equal(1, ackResult.ItemsAcknowledged);
+
+        // Assert - Next pop should return second item
+        var secondPop = await actor.Pop();
+        Assert.Single(secondPop.ItemsJson);
+        Assert.Contains("\"id\":2", secondPop.ItemsJson.First());
+
+        // Queue should now be empty
+        var thirdPop = await actor.Pop();
+        Assert.Empty(thirdPop.ItemsJson);
+    }
+
+    [Fact]
+    public async Task MultiplePopsBlocked_WhenLockActive()
+    {
+        // Arrange - push items
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":2}", Priority = 1 });
+
+        // Act - PopWithAck creates lock
+        var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
+        var lockId = popResult.LockId;
+
+        // Attempt Pop() - should be blocked
+        var blockedPop = await actor.Pop();
+        Assert.Empty(blockedPop.ItemsJson);
+
+        // Attempt another PopWithAck - should be blocked
+        var blockedPopWithAck = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
+        Assert.True(blockedPopWithAck.Locked);
+        Assert.Empty(blockedPopWithAck.ItemsJson);
+        Assert.Contains("locked", blockedPopWithAck.Message, StringComparison.OrdinalIgnoreCase);
+
+        // Acknowledge
+        await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = lockId });
+
+        // Pop() should now work
+        var successfulPop = await actor.Pop();
+        Assert.Single(successfulPop.ItemsJson);
+        Assert.Contains("\"id\":2", successfulPop.ItemsJson.First());
+    }
+
+    [Fact]
+    public async Task LockExpiry_DoesNotReorderQueue()
+    {
+        // Arrange - push items with different priorities
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"P1-A\"}", Priority = 1 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"P1-B\"}", Priority = 1 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"P2-A\"}", Priority = 2 });
+
+        // Act - PopWithAck on priority 1 item
+        var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 1 });
+        Assert.Contains("\"id\":\"P1-A\"", popResult.ItemsJson.First());
+
+        // Push more items to priority 1 while lock is active
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"P1-C\"}", Priority = 1 });
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"P1-D\"}", Priority = 1 });
+
+        // Let lock expire
+        await Task.Delay(1100);
+
+        // Assert - Pop all items and verify FIFO maintained within priorities
+        var pop1 = await actor.Pop();
+        Assert.Contains("\"id\":\"P1-A\"", pop1.ItemsJson.First());
+
+        var pop2 = await actor.Pop();
+        Assert.Contains("\"id\":\"P1-B\"", pop2.ItemsJson.First());
+
+        var pop3 = await actor.Pop();
+        Assert.Contains("\"id\":\"P1-C\"", pop3.ItemsJson.First());
+
+        var pop4 = await actor.Pop();
+        Assert.Contains("\"id\":\"P1-D\"", pop4.ItemsJson.First());
+
+        var pop5 = await actor.Pop();
+        Assert.Contains("\"id\":\"P2-A\"", pop5.ItemsJson.First());
+
+        // Queue should be empty
+        var pop6 = await actor.Pop();
+        Assert.Empty(pop6.ItemsJson);
+    }
+
+    [Fact]
+    public async Task ErrorState_BlocksPushAndPopOperations()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Create corrupted metadata and directly set it via SetStateAsync
+        var corruptedMetadata = new ActorMetadata
+        {
+            ErrorMessage = "Test corruption error - segment missing from external store",
+            Config = new MetadataConfig(),
+            Queues = new Dictionary<int, QueueMetadata>()
+        };
+
+        // Use SetStateAsync to put corrupted metadata into the state
+        await mockStateManager.Object.SetStateAsync("metadata", corruptedMetadata);
+
+        // Act & Assert - Push should throw
+        var pushEx = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"test\":\"data\"}", Priority = 0 })
+        );
+        Assert.Contains("Queue corrupted", pushEx.Message);
+        Assert.Contains("Test corruption error", pushEx.Message);
+
+        // Act & Assert - Pop should throw
+        var popEx = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await actor.Pop()
+        );
+        Assert.Contains("Queue corrupted", popEx.Message);
+        Assert.Contains("Test corruption error", popEx.Message);
     }
 }

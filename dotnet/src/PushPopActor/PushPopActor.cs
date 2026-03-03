@@ -16,6 +16,7 @@ public record ActorMetadata
 {
     public MetadataConfig Config { get; init; } = new();
     public Dictionary<int, QueueMetadata> Queues { get; init; } = new();
+    public string? ErrorMessage { get; init; }
 }
 
 /// <summary>
@@ -41,15 +42,15 @@ public record QueueMetadata
 
 /// <summary>
 /// Lock state for PopWithAck operations.
+/// Tracks position of locked item instead of storing the item data.
 /// </summary>
 public record LockState
 {
     public required string LockId { get; init; }
     public required double CreatedAt { get; init; }
     public required double ExpiresAt { get; init; }
-    public required List<string> ItemsJson { get; init; }
-    public required int Count { get; init; }
     public required int Priority { get; init; }
+    public required int HeadSegment { get; init; }
 }
 
 /// <summary>
@@ -63,6 +64,9 @@ public class PushPopActor : Actor, IPushPopActor
     private const int MaxLockTtlSeconds = 300;
     private const int DefaultLockTtlSeconds = 30;
     private const int LockIdLength = 11;
+
+    private static bool IsQueueCorrupted(ActorMetadata metadata) =>
+        !string.IsNullOrEmpty(metadata.ErrorMessage);
 
     public PushPopActor(ActorHost host) : base(host)
     {
@@ -117,6 +121,12 @@ public class PushPopActor : Actor, IPushPopActor
 
         // Get metadata
         var metadata = await GetMetadataAsync();
+
+        // Check for corrupted state
+        if (IsQueueCorrupted(metadata))
+        {
+            throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
+        }
 
         // Ensure priority queue exists
         if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
@@ -185,16 +195,21 @@ public class PushPopActor : Actor, IPushPopActor
                 return new PushResponse { Success = false };
             }
 
-            // Commit staged changes
-            await StateManager.SaveStateAsync();
-
             Logger.LogDebug($"Pushed item to queue at priority {request.Priority}");
 
             // Check and offload segments if eligible (non-blocking, best-effort)
             var metadata = await GetMetadataAsync();
             await CheckAndOffloadSegmentsAsync(request.Priority, metadata);
 
+            // Commit staged changes atomically (push + any offload changes)
+            await StateManager.SaveStateAsync();
+
             return new PushResponse { Success = true };
+        }
+        catch (InvalidOperationException)
+        {
+            // Re-throw corruption errors - queue must be repaired before continuing
+            throw;
         }
         catch (Exception ex)
         {
@@ -241,6 +256,12 @@ public class PushPopActor : Actor, IPushPopActor
             }
 
             var metadata = await GetMetadataAsync();
+
+            // Check for corrupted state
+            if (IsQueueCorrupted(metadata))
+            {
+                throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
+            }
 
             if (metadata.Queues.Count == 0)
             {
@@ -347,6 +368,11 @@ public class PushPopActor : Actor, IPushPopActor
 
             return (new PopResponse { ItemsJson = new List<string>() }, -1);
         }
+        catch (InvalidOperationException)
+        {
+            // Re-throw corruption errors - queue must be repaired before continuing
+            throw;
+        }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in PopAsync");
@@ -368,26 +394,94 @@ public class PushPopActor : Actor, IPushPopActor
         await StateManager.SetStateAsync("metadata", metadata);
     }
 
+    /// <summary>
+    /// Handles expired lock by removing it from state.
+    /// Stages the lock removal but does NOT commit - caller must call SaveStateAsync().
+    /// </summary>
     private async Task HandleExpiredLockAsync(LockState lockData)
     {
-        // Return items to queue and clear lock
-        Logger.LogDebug("Lock expired, returning items to queue");
-
-        // Restore all items to original priority (staged, not committed)
-        foreach (var jsonString in lockData.ItemsJson)
-        {
-            bool success = await PushInternal(jsonString, lockData.Priority);
-            if (!success)
-            {
-                Logger.LogError("Failed to restore item during lock expiry");
-            }
-        }
-
-        // Remove lock (staged)
+        // Lock expired - items remain at front of queue automatically (lock-in-place architecture)
+        Logger.LogDebug($"Lock {lockData.LockId} expired, items remain at front of queue");
         await StateManager.RemoveStateAsync("_active_lock");
+        // Note: SaveStateAsync() NOT called - staged change committed by caller
+    }
 
-        // Commit all changes atomically
-        await StateManager.SaveStateAsync();
+    /// <summary>
+    /// Internal Peek method that returns items without dequeuing, along with their priority and segment.
+    /// Used by PopWithAck to implement lock-in-place architecture.
+    /// </summary>
+    private async Task<(PopResponse response, int priority, int headSegment)> PeekWithPriorityAsync()
+    {
+        try
+        {
+            // Check if queue is locked
+            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
+            if (lockState.HasValue)
+            {
+                var lockData = lockState.Value;
+                double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+                if (now < lockData.ExpiresAt)
+                {
+                    Logger.LogDebug("Queue is locked, cannot peek");
+                    return (new PopResponse { ItemsJson = new List<string>() }, -1, -1);
+                }
+                else
+                {
+                    // Lock expired - return items and clear lock
+                    await HandleExpiredLockAsync(lockData);
+                }
+            }
+
+            var metadata = await GetMetadataAsync();
+
+            if (metadata.Queues.Count == 0)
+            {
+                return (new PopResponse { ItemsJson = new List<string>() }, -1, -1);
+            }
+
+            // Find lowest priority with items
+            var sortedPriorities = metadata.Queues.Keys.OrderBy(p => p).ToList();
+
+            foreach (var priority in sortedPriorities)
+            {
+                // Load any offloaded segments that are needed
+                await CheckAndLoadSegmentsAsync(priority, metadata);
+
+                var queueMeta = metadata.Queues[priority];
+
+                if (queueMeta.Count == 0) continue;
+
+                int headSegment = queueMeta.HeadSegment;
+
+                // Get head segment
+                string segmentKey = $"queue_{priority}_seg_{headSegment}";
+                var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
+
+                if (!segment.HasValue || segment.Value.Count == 0)
+                {
+                    // Defensive: skip empty segment
+                    Logger.LogWarning($"Count desync detected for priority {priority}, skipping");
+                    continue;
+                }
+
+                // Peek single item from front (don't dequeue)
+                var segmentQueue = segment.Value;
+                var itemJson = segmentQueue.Peek();
+
+                Logger.LogDebug($"Peeked item from priority {priority}, segment {headSegment}");
+
+                // Return item JSON string directly with priority and segment
+                return (new PopResponse { ItemsJson = new List<string> { itemJson } }, priority, headSegment);
+            }
+
+            return (new PopResponse { ItemsJson = new List<string>() }, -1, -1);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error in PeekWithPriorityAsync");
+            return (new PopResponse { ItemsJson = new List<string>() }, -1, -1);
+        }
     }
 
     /// <summary>
@@ -425,10 +519,10 @@ public class PushPopActor : Actor, IPushPopActor
                 }
             }
 
-            // Pop items (just one for now) and track priority
-            var (popResult, poppedPriority) = await PopWithPriorityAsync();
+            // Peek items (don't dequeue) and track priority and position
+            var (peekResult, priority, headSegment) = await PeekWithPriorityAsync();
 
-            if (popResult.ItemsJson.Count == 0)
+            if (peekResult.ItemsJson.Count == 0)
             {
                 return new PopWithAckResponse
                 {
@@ -439,7 +533,7 @@ public class PushPopActor : Actor, IPushPopActor
                 };
             }
 
-            // Create lock
+            // Create lock (tracks position, not item data)
             string lockId = GenerateLockId();
             double nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             double lockExpiresAt = nowUnix + ttlSeconds;
@@ -449,9 +543,8 @@ public class PushPopActor : Actor, IPushPopActor
                 LockId = lockId,
                 CreatedAt = nowUnix,
                 ExpiresAt = lockExpiresAt,
-                ItemsJson = popResult.ItemsJson,
-                Count = popResult.ItemsJson.Count,
-                Priority = poppedPriority
+                Priority = priority,
+                HeadSegment = headSegment
             };
 
             await StateManager.SetStateAsync("_active_lock", lockData);
@@ -461,8 +554,8 @@ public class PushPopActor : Actor, IPushPopActor
 
             return new PopWithAckResponse
             {
-                ItemsJson = popResult.ItemsJson,
-                Count = popResult.ItemsJson.Count,
+                ItemsJson = peekResult.ItemsJson,
+                Count = peekResult.ItemsJson.Count,
                 Locked = true,
                 LockId = lockId,
                 LockExpiresAt = lockExpiresAt,
@@ -534,6 +627,7 @@ public class PushPopActor : Actor, IPushPopActor
             {
                 // Lock expired - return items to queue
                 await HandleExpiredLockAsync(lockData);
+                await StateManager.SaveStateAsync();
 
                 return new AcknowledgeResponse
                 {
@@ -543,17 +637,103 @@ public class PushPopActor : Actor, IPushPopActor
                 };
             }
 
-            // Acknowledge - items already removed from queue during PopWithAck
+            // Acknowledge - now dequeue the locked item (lock-in-place architecture)
+            var metadata = await GetMetadataAsync();
+
+            if (!metadata.Queues.TryGetValue(lockData.Priority, out var queueMeta))
+            {
+                // Priority queue no longer exists - clear lock and return error
+                await StateManager.RemoveStateAsync("_active_lock");
+                await StateManager.SaveStateAsync();
+
+                return new AcknowledgeResponse
+                {
+                    Success = false,
+                    Message = "Priority queue no longer exists",
+                    ErrorCode = "QUEUE_NOT_FOUND"
+                };
+            }
+
+            string segmentKey = $"queue_{lockData.Priority}_seg_{lockData.HeadSegment}";
+            var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
+
+            if (!segment.HasValue || segment.Value.Count == 0)
+            {
+                // Segment no longer exists or is empty - clear lock and return error
+                await StateManager.RemoveStateAsync("_active_lock");
+                await StateManager.SaveStateAsync();
+
+                return new AcknowledgeResponse
+                {
+                    Success = false,
+                    Message = "Locked item no longer exists in queue",
+                    ErrorCode = "ITEM_NOT_FOUND"
+                };
+            }
+
+            // Dequeue the single locked item
+            var segmentQueue = segment.Value;
+            segmentQueue.Dequeue();
+
+            int headSegment = queueMeta.HeadSegment;
+            int tailSegment = queueMeta.TailSegment;
+            int count = queueMeta.Count - 1;
+
+            // Handle segment cleanup (same logic as PopWithPriorityAsync)
+            if (segmentQueue.Count == 0)
+            {
+                if (headSegment < tailSegment)
+                {
+                    // More segments exist, move to next
+                    await StateManager.RemoveStateAsync(segmentKey);
+                    headSegment++;
+
+                    queueMeta = queueMeta with
+                    {
+                        HeadSegment = headSegment,
+                        TailSegment = tailSegment,
+                        Count = count
+                    };
+                    metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [lockData.Priority] = queueMeta } };
+                    await SetMetadataAsync(metadata);
+                }
+                else
+                {
+                    // Last segment empty, queue is now empty
+                    await StateManager.RemoveStateAsync(segmentKey);
+
+                    var updatedQueues = new Dictionary<int, QueueMetadata>(metadata.Queues);
+                    updatedQueues.Remove(lockData.Priority);
+                    metadata = metadata with { Queues = updatedQueues };
+                    await SetMetadataAsync(metadata);
+                }
+            }
+            else
+            {
+                // Segment still has items, save it
+                await StateManager.SetStateAsync(segmentKey, segmentQueue);
+
+                queueMeta = queueMeta with
+                {
+                    HeadSegment = headSegment,
+                    TailSegment = tailSegment,
+                    Count = count
+                };
+                metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [lockData.Priority] = queueMeta } };
+                await SetMetadataAsync(metadata);
+            }
+
+            // Remove lock and commit all changes atomically
             await StateManager.RemoveStateAsync("_active_lock");
             await StateManager.SaveStateAsync();
 
-            Logger.LogDebug($"Acknowledged lock {lockId}, {lockData.Count} items processed");
+            Logger.LogDebug($"Acknowledged lock {lockId}, 1 item processed");
 
             return new AcknowledgeResponse
             {
                 Success = true,
-                Message = $"Successfully acknowledged {lockData.Count} item(s)",
-                ItemsAcknowledged = lockData.Count
+                Message = "Successfully acknowledged 1 item",
+                ItemsAcknowledged = 1
             };
         }
         catch (Exception ex)
@@ -748,8 +928,18 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (string.IsNullOrEmpty(result))
             {
-                Logger.LogWarning($"No data found for offloaded segment {segmentNum} priority {priority} (actor {Id.GetId()})");
-                return null;
+                // Store error in metadata using record 'with' syntax
+                string errorMsg = $"CORRUPTED: Segment {segmentNum} priority {priority} missing from external store. " +
+                                  $"Offloaded range: {GetOffloadedRange(metadata, priority)}. " +
+                                  $"Actor ID: {Id.GetId()}. " +
+                                  $"Manual intervention required.";
+
+                var corruptedMetadata = metadata with { ErrorMessage = errorMsg };
+                await SetMetadataAsync(corruptedMetadata);
+                await StateManager.SaveStateAsync();  // Persist error state immediately
+
+                Logger.LogCritical($"Queue corrupted: {errorMsg}");
+                throw new InvalidOperationException(errorMsg);
             }
 
             // Deserialize from JSON
@@ -757,8 +947,18 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (segmentData == null || segmentData.Count == 0)
             {
-                Logger.LogWarning($"Empty data for offloaded segment {segmentNum} priority {priority} (actor {Id.GetId()})");
-                return null;
+                // Store error in metadata using record 'with' syntax
+                string errorMsg = $"CORRUPTED: Empty data for offloaded segment {segmentNum} priority {priority}. " +
+                                  $"Offloaded range: {GetOffloadedRange(metadata, priority)}. " +
+                                  $"Actor ID: {Id.GetId()}. " +
+                                  $"Manual intervention required.";
+
+                var corruptedMetadata = metadata with { ErrorMessage = errorMsg };
+                await SetMetadataAsync(corruptedMetadata);
+                await StateManager.SaveStateAsync();  // Persist error state immediately
+
+                Logger.LogCritical($"Queue corrupted: {errorMsg}");
+                throw new InvalidOperationException(errorMsg);
             }
 
             // Save to actor state manager
@@ -859,11 +1059,8 @@ public class PushPopActor : Actor, IPushPopActor
         {
             if (segmentNum <= maxOffloaded)
             {
-                var updatedMetadata = await LoadOffloadedSegmentAsync(priority, segmentNum, metadata);
-                if (updatedMetadata != null)
-                {
-                    metadata = updatedMetadata;
-                }
+                // LoadOffloadedSegmentAsync now throws on failure instead of returning null
+                metadata = await LoadOffloadedSegmentAsync(priority, segmentNum, metadata);
             }
             else
             {
