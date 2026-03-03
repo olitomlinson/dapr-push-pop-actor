@@ -54,10 +54,10 @@ public class PopWithAckRequest
 public class PopResponse
 {
     /// <summary>
-    /// List of popped items (as JSON strings).
+    /// The popped item (as JSON string), or null if queue is empty.
     /// </summary>
     [DataMember]
-    public List<string> ItemsJson { get; set; } = new();
+    public string? ItemJson { get; set; }
 }
 
 /// <summary>
@@ -67,16 +67,10 @@ public class PopResponse
 public class PopWithAckResponse
 {
     /// <summary>
-    /// List of popped items (as JSON strings).
+    /// The popped item (as JSON string), or null if queue is empty or locked.
     /// </summary>
     [DataMember]
-    public List<string> ItemsJson { get; set; } = new();
-
-    /// <summary>
-    /// Number of items returned.
-    /// </summary>
-    [DataMember]
-    public int Count { get; set; }
+    public string? ItemJson { get; set; }
 
     /// <summary>
     /// Whether the queue is locked.

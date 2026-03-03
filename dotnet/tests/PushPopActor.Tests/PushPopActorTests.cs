@@ -136,7 +136,7 @@ public class PushPopActorTests
     }
 
     [Fact]
-    public async Task PopAsync_FromEmptyQueue_ReturnsEmptyList()
+    public async Task PopAsync_FromEmptyQueue_ReturnsNull()
     {
         // Arrange
         var mockStateManager = CreateMockStateManager();
@@ -146,7 +146,7 @@ public class PushPopActorTests
         var result = await actor.Pop();
 
         // Assert
-        Assert.Empty(result.ItemsJson);
+        Assert.Null(result.ItemJson);
     }
 
     [Fact]
@@ -163,8 +163,8 @@ public class PushPopActorTests
         var result = await actor.Pop();
 
         // Assert
-        Assert.Single(result.ItemsJson);
-        var returnedItem = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(result.ItemsJson[0]);
+        Assert.NotNull(result.ItemJson);
+        var returnedItem = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(result.ItemJson);
         Assert.Equal("test", returnedItem!["message"].ToString());
     }
 
@@ -198,9 +198,9 @@ public class PushPopActorTests
         var item3 = await actor.Pop();
 
         // Assert - Should be in FIFO order
-        var deserialized1 = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(item1.ItemsJson[0]);
-        var deserialized2 = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(item2.ItemsJson[0]);
-        var deserialized3 = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(item3.ItemsJson[0]);
+        var deserialized1 = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(item1.ItemJson!);
+        var deserialized2 = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(item2.ItemJson!);
+        var deserialized3 = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(item3.ItemJson!);
 
         Assert.Equal(1, Convert.ToInt32(deserialized1!["id"].ToString()));
         Assert.Equal(2, Convert.ToInt32(deserialized2!["id"].ToString()));
@@ -222,7 +222,7 @@ public class PushPopActorTests
         // Assert
         Assert.True(result.Locked);
         Assert.NotNull(result.LockId);
-        Assert.Single(result.ItemsJson);
+        Assert.NotNull(result.ItemJson);
     }
 
     [Fact]
@@ -273,8 +273,8 @@ public class PushPopActorTests
         var result = await actor.Pop();
 
         // Assert
-        Assert.Single(result.ItemsJson);
-        Assert.Equal(original, result.ItemsJson[0]);
+        Assert.NotNull(result.ItemJson);
+        Assert.Equal(original, result.ItemJson);
     }
 
     [Fact]
@@ -311,25 +311,25 @@ public class PushPopActorTests
 
         // PopWithAck with 1 second TTL (will pop priority 1 item first)
         var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 1 });
-        Assert.Single(popResult.ItemsJson);
-        Assert.Contains("\"id\":2", popResult.ItemsJson.First());
+        Assert.NotNull(popResult.ItemJson);
+        Assert.Contains("\"id\":2", popResult.ItemJson);
 
         // Wait for lock to expire
         await Task.Delay(1100);
 
         // Pop again - should get same item (re-pushed with priority 1, not priority 0)
         var secondPop = await actor.Pop();
-        Assert.Single(secondPop.ItemsJson);
-        Assert.Contains("\"id\":2", secondPop.ItemsJson.First());
+        Assert.NotNull(secondPop.ItemJson);
+        Assert.Contains("\"id\":2", secondPop.ItemJson);
 
         // Final pop gets priority 2 item (proving order was preserved)
         var thirdPop = await actor.Pop();
-        Assert.Single(thirdPop.ItemsJson);
-        Assert.Contains("\"id\":1", thirdPop.ItemsJson.First());
+        Assert.NotNull(thirdPop.ItemJson);
+        Assert.Contains("\"id\":1", thirdPop.ItemJson);
 
         // Queue should now be empty
         var fourthPop = await actor.Pop();
-        Assert.Empty(fourthPop.ItemsJson);
+        Assert.Null(fourthPop.ItemJson);
     }
 
     [Fact]
@@ -344,14 +344,14 @@ public class PushPopActorTests
         var result = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
 
         // Assert - item is locked and peeked (still in queue with lock-in-place)
-        Assert.Single(result.ItemsJson);
+        Assert.NotNull(result.ItemJson);
         Assert.True(result.Locked);
         Assert.NotNull(result.LockId);
-        Assert.Contains("\"id\":1", result.ItemsJson.First());
+        Assert.Contains("\"id\":1", result.ItemJson);
 
         // Verify queue is blocked while lock exists (cannot pop)
         var popResult = await actor.Pop();
-        Assert.Empty(popResult.ItemsJson);
+        Assert.Null(popResult.ItemJson);
 
         // After acknowledgement, queue should be empty
         var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = result.LockId });
@@ -360,7 +360,7 @@ public class PushPopActorTests
 
         // Now pop should return empty
         var finalPop = await actor.Pop();
-        Assert.Empty(finalPop.ItemsJson);
+        Assert.Null(finalPop.ItemJson);
     }
 
     [Fact]
@@ -376,8 +376,8 @@ public class PushPopActorTests
 
         // Act - PopWithAck locks Item-A
         var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 1 });
-        Assert.Single(popResult.ItemsJson);
-        Assert.Contains("\"id\":\"A\"", popResult.ItemsJson.First());
+        Assert.NotNull(popResult.ItemJson);
+        Assert.Contains("\"id\":\"A\"", popResult.ItemJson);
 
         // Push Item-D while lock is active
         await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"D\"}", Priority = 1 });
@@ -387,22 +387,22 @@ public class PushPopActorTests
 
         // Assert - Pop should return Item-A (preserved position at front)
         var firstPop = await actor.Pop();
-        Assert.Single(firstPop.ItemsJson);
-        Assert.Contains("\"id\":\"A\"", firstPop.ItemsJson.First());
+        Assert.NotNull(firstPop.ItemJson);
+        Assert.Contains("\"id\":\"A\"", firstPop.ItemJson);
 
         // Remaining pops should return B, C, D in order
         var secondPop = await actor.Pop();
-        Assert.Contains("\"id\":\"B\"", secondPop.ItemsJson.First());
+        Assert.Contains("\"id\":\"B\"", secondPop.ItemJson);
 
         var thirdPop = await actor.Pop();
-        Assert.Contains("\"id\":\"C\"", thirdPop.ItemsJson.First());
+        Assert.Contains("\"id\":\"C\"", thirdPop.ItemJson);
 
         var fourthPop = await actor.Pop();
-        Assert.Contains("\"id\":\"D\"", fourthPop.ItemsJson.First());
+        Assert.Contains("\"id\":\"D\"", fourthPop.ItemJson);
 
         // Queue should now be empty
         var fifthPop = await actor.Pop();
-        Assert.Empty(fifthPop.ItemsJson);
+        Assert.Null(fifthPop.ItemJson);
     }
 
     [Fact]
@@ -416,12 +416,12 @@ public class PushPopActorTests
 
         // Act - PopWithAck locks the item
         var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
-        Assert.Single(popResult.ItemsJson);
+        Assert.NotNull(popResult.ItemJson);
         var lockId = popResult.LockId;
 
         // Assert - Pop returns empty while lock exists (item still in queue but locked)
         var blockedPop = await actor.Pop();
-        Assert.Empty(blockedPop.ItemsJson);
+        Assert.Null(blockedPop.ItemJson);
 
         // Acknowledge the lock
         var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = lockId });
@@ -429,7 +429,7 @@ public class PushPopActorTests
 
         // Now queue should be truly empty (item dequeued on acknowledgement)
         var finalPop = await actor.Pop();
-        Assert.Empty(finalPop.ItemsJson);
+        Assert.Null(finalPop.ItemJson);
     }
 
     [Fact]
@@ -444,7 +444,7 @@ public class PushPopActorTests
 
         // Act - PopWithAck first item
         var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
-        Assert.Contains("\"id\":1", popResult.ItemsJson.First());
+        Assert.Contains("\"id\":1", popResult.ItemJson!);
         var lockId = popResult.LockId;
 
         // Acknowledge
@@ -454,12 +454,12 @@ public class PushPopActorTests
 
         // Assert - Next pop should return second item
         var secondPop = await actor.Pop();
-        Assert.Single(secondPop.ItemsJson);
-        Assert.Contains("\"id\":2", secondPop.ItemsJson.First());
+        Assert.NotNull(secondPop.ItemJson);
+        Assert.Contains("\"id\":2", secondPop.ItemJson!);
 
         // Queue should now be empty
         var thirdPop = await actor.Pop();
-        Assert.Empty(thirdPop.ItemsJson);
+        Assert.Null(thirdPop.ItemJson);
     }
 
     [Fact]
@@ -478,12 +478,12 @@ public class PushPopActorTests
 
         // Attempt Pop() - should be blocked
         var blockedPop = await actor.Pop();
-        Assert.Empty(blockedPop.ItemsJson);
+        Assert.Null(blockedPop.ItemJson);
 
         // Attempt another PopWithAck - should be blocked
         var blockedPopWithAck = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
         Assert.True(blockedPopWithAck.Locked);
-        Assert.Empty(blockedPopWithAck.ItemsJson);
+        Assert.Null(blockedPopWithAck.ItemJson);
         Assert.Contains("locked", blockedPopWithAck.Message, StringComparison.OrdinalIgnoreCase);
 
         // Acknowledge
@@ -491,8 +491,8 @@ public class PushPopActorTests
 
         // Pop() should now work
         var successfulPop = await actor.Pop();
-        Assert.Single(successfulPop.ItemsJson);
-        Assert.Contains("\"id\":2", successfulPop.ItemsJson.First());
+        Assert.NotNull(successfulPop.ItemJson);
+        Assert.Contains("\"id\":2", successfulPop.ItemJson!);
     }
 
     [Fact]
@@ -508,7 +508,7 @@ public class PushPopActorTests
 
         // Act - PopWithAck on priority 1 item
         var popResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 1 });
-        Assert.Contains("\"id\":\"P1-A\"", popResult.ItemsJson.First());
+        Assert.Contains("\"id\":\"P1-A\"", popResult.ItemJson!);
 
         // Push more items to priority 1 while lock is active
         await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":\"P1-C\"}", Priority = 1 });
@@ -519,23 +519,23 @@ public class PushPopActorTests
 
         // Assert - Pop all items and verify FIFO maintained within priorities
         var pop1 = await actor.Pop();
-        Assert.Contains("\"id\":\"P1-A\"", pop1.ItemsJson.First());
+        Assert.Contains("\"id\":\"P1-A\"", pop1.ItemJson);
 
         var pop2 = await actor.Pop();
-        Assert.Contains("\"id\":\"P1-B\"", pop2.ItemsJson.First());
+        Assert.Contains("\"id\":\"P1-B\"", pop2.ItemJson);
 
         var pop3 = await actor.Pop();
-        Assert.Contains("\"id\":\"P1-C\"", pop3.ItemsJson.First());
+        Assert.Contains("\"id\":\"P1-C\"", pop3.ItemJson);
 
         var pop4 = await actor.Pop();
-        Assert.Contains("\"id\":\"P1-D\"", pop4.ItemsJson.First());
+        Assert.Contains("\"id\":\"P1-D\"", pop4.ItemJson);
 
         var pop5 = await actor.Pop();
-        Assert.Contains("\"id\":\"P2-A\"", pop5.ItemsJson.First());
+        Assert.Contains("\"id\":\"P2-A\"", pop5.ItemJson);
 
         // Queue should be empty
         var pop6 = await actor.Pop();
-        Assert.Empty(pop6.ItemsJson);
+        Assert.Null(pop6.ItemJson);
     }
 
     [Fact]

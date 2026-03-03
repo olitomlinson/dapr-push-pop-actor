@@ -93,7 +93,7 @@ public class QueueController : ControllerBase
                     });
 
                 // If locked by another operation, return 423 Locked
-                if (result.Locked && result.Count == 0)
+                if (result.Locked && result.ItemJson == null)
                 {
                     return StatusCode(423, new
                     {
@@ -102,15 +102,16 @@ public class QueueController : ControllerBase
                     });
                 }
 
-                // Parse JSON strings to JsonElement for API response (no unnecessary deserialization)
-                var items = result.ItemsJson
-                    .Select(json => JsonDocument.Parse(json).RootElement)
-                    .ToList();
+                // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
+                object? item = null;
+                if (result.ItemJson != null)
+                {
+                    item = JsonDocument.Parse(result.ItemJson).RootElement;
+                }
 
                 return Ok(new
                 {
-                    items,
-                    count = result.Count,
+                    item,
                     locked = result.Locked,
                     lock_id = result.LockId,
                     lock_expires_at = result.LockExpiresAt,
@@ -123,9 +124,9 @@ public class QueueController : ControllerBase
 
                 // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
                 object? item = null;
-                if (result.ItemsJson.Count > 0)
+                if (result.ItemJson != null)
                 {
-                    item = JsonDocument.Parse(result.ItemsJson[0]).RootElement;
+                    item = JsonDocument.Parse(result.ItemJson).RootElement;
                 }
 
                 return Ok(new { item });
