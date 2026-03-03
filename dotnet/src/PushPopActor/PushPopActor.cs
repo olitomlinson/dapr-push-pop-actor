@@ -122,12 +122,6 @@ public class PushPopActor : Actor, IPushPopActor
         // Get metadata
         var metadata = await GetMetadataAsync();
 
-        // Check for corrupted state
-        if (IsQueueCorrupted(metadata))
-        {
-            throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
-        }
-
         // Ensure priority queue exists
         if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
         {
@@ -185,6 +179,15 @@ public class PushPopActor : Actor, IPushPopActor
     /// </summary>
     public async Task<PushResponse> Push(PushRequest request)
     {
+        // Get metadata
+        var metadata = await GetMetadataAsync();
+
+        // Check for corrupted state
+        if (IsQueueCorrupted(metadata))
+        {
+            throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
+        }
+
         try
         {
             // Push and stage changes
@@ -198,7 +201,6 @@ public class PushPopActor : Actor, IPushPopActor
             Logger.LogDebug($"Pushed item to queue at priority {request.Priority}");
 
             // Check and offload segments if eligible (non-blocking, best-effort)
-            var metadata = await GetMetadataAsync();
             await CheckAndOffloadSegmentsAsync(request.Priority, metadata);
 
             // Commit staged changes atomically (push + any offload changes)
@@ -223,6 +225,15 @@ public class PushPopActor : Actor, IPushPopActor
     /// </summary>
     public async Task<PopResponse> Pop()
     {
+
+        var metadata = await GetMetadataAsync();
+
+        // Check for corrupted state
+        if (IsQueueCorrupted(metadata))
+        {
+            throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
+        }
+
         var (response, _) = await PopWithPriorityAsync();
         await StateManager.SaveStateAsync();  // Commit the staged changes atomically
         return response;
@@ -234,6 +245,9 @@ public class PushPopActor : Actor, IPushPopActor
     /// </summary>
     private async Task<(PopResponse response, int priority)> PopWithPriorityAsync()
     {
+
+        var metadata = await GetMetadataAsync();
+
         try
         {
             // Check if queue is locked
@@ -255,14 +269,6 @@ public class PushPopActor : Actor, IPushPopActor
                 }
             }
 
-            var metadata = await GetMetadataAsync();
-
-            // Check for corrupted state
-            if (IsQueueCorrupted(metadata))
-            {
-                throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
-            }
-
             if (metadata.Queues.Count == 0)
             {
                 return (new PopResponse { ItemsJson = new List<string>() }, -1);
@@ -274,7 +280,7 @@ public class PushPopActor : Actor, IPushPopActor
             foreach (var priority in sortedPriorities)
             {
                 // Load any offloaded segments that are needed
-                await CheckAndLoadSegmentsAsync(priority, metadata);
+                metadata = await CheckAndLoadSegmentsAsync(priority, metadata);
 
                 var queueMeta = metadata.Queues[priority];
 
@@ -311,7 +317,10 @@ public class PushPopActor : Actor, IPushPopActor
                         // More segments exist, move to next
                         // Delete the empty segment from state
                         await StateManager.RemoveStateAsync(segmentKey);
+
+                        int oldHeadSegment = headSegment;
                         headSegment++;
+
                         // Update metadata pointers
                         count--;
                         queueMeta = queueMeta with
@@ -322,6 +331,11 @@ public class PushPopActor : Actor, IPushPopActor
                         };
                         metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [priority] = queueMeta } };
                         await SetMetadataAsync(metadata);
+
+                        Logger.LogDebug($"[HEAD-ADVANCE] Actor {Id.GetId()}, Priority {priority}: " +
+                            $"headSegment advancing from {oldHeadSegment} to {headSegment}, " +
+                            $"tailSegment={tailSegment}, count={count}, " +
+                            $"offloadedRange=({queueMeta.HeadOffloadedSegment}, {queueMeta.TailOffloadedSegment})");
 
                         Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
@@ -446,7 +460,7 @@ public class PushPopActor : Actor, IPushPopActor
             foreach (var priority in sortedPriorities)
             {
                 // Load any offloaded segments that are needed
-                await CheckAndLoadSegmentsAsync(priority, metadata);
+                metadata = await CheckAndLoadSegmentsAsync(priority, metadata);
 
                 var queueMeta = metadata.Queues[priority];
 
@@ -489,6 +503,16 @@ public class PushPopActor : Actor, IPushPopActor
     /// </summary>
     public async Task<PopWithAckResponse> PopWithAck(PopWithAckRequest request)
     {
+
+        var metadata = await GetMetadataAsync();
+
+        // Check for corrupted state
+        if (IsQueueCorrupted(metadata))
+        {
+            throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
+        }
+
+
         try
         {
             // Get TTL (default 30, clamped to 1-300)
@@ -686,6 +710,8 @@ public class PushPopActor : Actor, IPushPopActor
                 {
                     // More segments exist, move to next
                     await StateManager.RemoveStateAsync(segmentKey);
+
+                    int oldHeadSegment = headSegment;
                     headSegment++;
 
                     queueMeta = queueMeta with
@@ -696,6 +722,11 @@ public class PushPopActor : Actor, IPushPopActor
                     };
                     metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [lockData.Priority] = queueMeta } };
                     await SetMetadataAsync(metadata);
+
+                    Logger.LogDebug($"[HEAD-ADVANCE] Actor {Id.GetId()}, Priority {lockData.Priority}: " +
+                        $"headSegment advancing from {oldHeadSegment} to {headSegment}, " +
+                        $"tailSegment={tailSegment}, count={count}, " +
+                        $"offloadedRange=({queueMeta.HeadOffloadedSegment}, {queueMeta.TailOffloadedSegment})");
                 }
                 else
                 {
@@ -885,6 +916,9 @@ public class PushPopActor : Actor, IPushPopActor
         {
             string offloadKey = GetOffloadedSegmentKey(priority, segmentNum);
 
+            Logger.LogDebug($"[OFFLOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                $"Offloading to key '{offloadKey}'");
+
             // Serialize segment data to JSON
             string segmentJson = JsonSerializer.Serialize(segmentData);
 
@@ -902,12 +936,15 @@ public class PushPopActor : Actor, IPushPopActor
             // Save metadata (staging only - commit happens in caller)
             await SetMetadataAsync(updatedMetadata);
 
-            Logger.LogDebug($"Offloaded segment {segmentNum} for priority {priority} (actor {Id.GetId()})");
+            Logger.LogDebug($"[OFFLOAD-SUCCESS] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                $"Saved to external store, deleting from actor state");
+
             return updatedMetadata;
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, $"Failed to offload segment {segmentNum} for priority {priority} (actor {Id.GetId()})");
+            Logger.LogWarning($"[OFFLOAD-FAILED] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                $"Failed to offload - {ex.Message}");
             return null;
         }
     }
@@ -921,6 +958,9 @@ public class PushPopActor : Actor, IPushPopActor
         try
         {
             string offloadKey = GetOffloadedSegmentKey(priority, segmentNum);
+
+            Logger.LogDebug($"[LOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                $"Loading from key '{offloadKey}'");
 
             // Load from state store
             using var client = new DaprClientBuilder().Build();
@@ -938,7 +978,9 @@ public class PushPopActor : Actor, IPushPopActor
                 await SetMetadataAsync(corruptedMetadata);
                 await StateManager.SaveStateAsync();  // Persist error state immediately
 
-                Logger.LogCritical($"Queue corrupted: {errorMsg}");
+                Logger.LogCritical($"[LOAD-MISSING] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                    $"Segment missing from external store! Offloaded range: {GetOffloadedRange(metadata, priority)}");
+
                 throw new InvalidOperationException(errorMsg);
             }
 
@@ -974,7 +1016,9 @@ public class PushPopActor : Actor, IPushPopActor
             // Save metadata (staging only - commit happens in caller)
             await SetMetadataAsync(updatedMetadata);
 
-            Logger.LogDebug($"Loaded segment {segmentNum} for priority {priority} from state store (actor {Id.GetId()})");
+            Logger.LogDebug($"[LOAD-SUCCESS] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                $"Loaded {segmentData.Count} items, deleting from external store");
+
             return updatedMetadata;
         }
         catch (Exception ex)
@@ -1004,6 +1048,11 @@ public class PushPopActor : Actor, IPushPopActor
             int minOffload = headSegment + bufferSegments + 1;
             int maxOffload = tailSegment;
 
+            Logger.LogDebug($"[OFFLOAD-CHECK] Actor {Id.GetId()}, Priority {priority}: " +
+                $"headSegment={headSegment}, tailSegment={tailSegment}, bufferSegments={bufferSegments}, " +
+                $"minOffload={minOffload}, maxOffload={maxOffload}, " +
+                $"offloadedRange=({offloadedRange.head}, {offloadedRange.tail})");
+
             // Check each segment in range
             for (int segmentNum = minOffload; segmentNum < maxOffload; segmentNum++)
             {
@@ -1020,6 +1069,12 @@ public class PushPopActor : Actor, IPushPopActor
 
                 if (segment.HasValue && segment.Value.Count == MaxSegmentSize)
                 {
+                    bool alreadyOffloaded = (offloadedRange.head != null && offloadedRange.tail != null &&
+                                            segmentNum >= offloadedRange.head && segmentNum <= offloadedRange.tail);
+
+                    Logger.LogDebug($"[OFFLOAD-ELIGIBLE] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                        $"Full={segment.Value.Count == MaxSegmentSize}, AlreadyOffloaded={alreadyOffloaded}");
+
                     // Offload this segment (non-blocking on failure)
                     var updatedMetadata = await OffloadSegmentAsync(priority, segmentNum, segment.Value, metadata);
                     if (updatedMetadata != null)
@@ -1038,15 +1093,16 @@ public class PushPopActor : Actor, IPushPopActor
     /// <summary>
     /// Check and load offloaded segments that are needed for consumption.
     /// Called before Pop. Blocking - throws exceptions on failure to prevent data corruption.
+    /// Returns updated metadata if segments were loaded, otherwise returns input metadata.
     /// </summary>
-    private async Task CheckAndLoadSegmentsAsync(int priority, ActorMetadata metadata)
+    private async Task<ActorMetadata> CheckAndLoadSegmentsAsync(int priority, ActorMetadata metadata)
     {
         var (head, tail) = GetOffloadedRange(metadata, priority);
         if (head == null || tail == null)
-            return;
+            return metadata;
 
         if (!metadata.Queues.TryGetValue(priority, out var queueMeta))
-            return;
+            return metadata;
 
         int headSegment = queueMeta.HeadSegment;
         int bufferSegments = GetBufferSegments(metadata);
@@ -1054,11 +1110,19 @@ public class PushPopActor : Actor, IPushPopActor
         // Calculate which segments should be loaded
         int maxOffloaded = headSegment + bufferSegments;
 
+        Logger.LogDebug($"[LOAD-CHECK] Actor {Id.GetId()}, Priority {priority}: " +
+            $"headSegment={headSegment}, bufferSegments={bufferSegments}, " +
+            $"maxOffloaded={maxOffloaded}, " +
+            $"offloadedRange=({head}, {tail})");
+
         // Load segments that are within the buffer zone (from head of offloaded range)
         for (int segmentNum = head.Value; segmentNum <= tail.Value; segmentNum++)
         {
             if (segmentNum <= maxOffloaded)
             {
+                Logger.LogDebug($"[LOAD-ELIGIBLE] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
+                    $"segmentNum ({segmentNum}) <= maxOffloaded ({maxOffloaded}), attempting load");
+
                 // LoadOffloadedSegmentAsync now throws on failure instead of returning null
                 metadata = await LoadOffloadedSegmentAsync(priority, segmentNum, metadata);
             }
@@ -1068,5 +1132,8 @@ public class PushPopActor : Actor, IPushPopActor
                 break;
             }
         }
+
+        // Return updated metadata so caller can use it
+        return metadata;
     }
 }
