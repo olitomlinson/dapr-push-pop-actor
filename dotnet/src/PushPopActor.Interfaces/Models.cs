@@ -1,142 +1,118 @@
-using System.Runtime.Serialization;
-
 namespace PushPopActor.Interfaces;
 
 /// <summary>
 /// Request model for Push operation.
 /// </summary>
-[DataContract]
-public class PushRequest
+public record PushRequest
 {
     /// <summary>
     /// The item to push (as JSON string).
     /// </summary>
-    [DataMember]
-    public string ItemJson { get; set; } = string.Empty;
+    public string ItemJson { get; init; } = string.Empty;
 
     /// <summary>
     /// Priority level (0 = highest priority, default: 1).
     /// </summary>
-    [DataMember]
-    public int Priority { get; set; } = 1;
+    public int Priority { get; init; } = 1;
 }
 
 /// <summary>
 /// Response model for Push operation.
 /// </summary>
-[DataContract]
-public class PushResponse
+public record PushResponse
 {
     /// <summary>
     /// Whether the push was successful.
     /// </summary>
-    [DataMember]
-    public bool Success { get; set; }
+    public bool Success { get; init; }
 }
 
 /// <summary>
 /// Request model for PopWithAck operation.
 /// </summary>
-[DataContract]
-public class PopWithAckRequest
+public record PopWithAckRequest
 {
     /// <summary>
     /// Lock TTL in seconds (1-300).
     /// </summary>
-    [DataMember]
-    public int TtlSeconds { get; set; } = 30;
+    public int TtlSeconds { get; init; } = 30;
 }
 
 /// <summary>
 /// Response model for Pop operation.
 /// </summary>
-[DataContract]
-public class PopResponse
+public record PopResponse
 {
     /// <summary>
     /// The popped item (as JSON string), or null if queue is empty.
     /// </summary>
-    [DataMember]
-    public string? ItemJson { get; set; }
+    public string? ItemJson { get; init; }
 }
 
 /// <summary>
 /// Response model for PopWithAck operation.
 /// </summary>
-[DataContract]
-public class PopWithAckResponse
+public record PopWithAckResponse
 {
     /// <summary>
     /// The popped item (as JSON string), or null if queue is empty or locked.
     /// </summary>
-    [DataMember]
-    public string? ItemJson { get; set; }
+    public string? ItemJson { get; init; }
 
     /// <summary>
     /// Whether the queue is locked.
     /// </summary>
-    [DataMember]
-    public bool Locked { get; set; }
+    public bool Locked { get; init; }
 
     /// <summary>
     /// Lock ID for acknowledgement (if locked).
     /// </summary>
-    [DataMember]
-    public string? LockId { get; set; }
+    public string? LockId { get; init; }
 
     /// <summary>
     /// Unix timestamp when lock expires.
     /// </summary>
-    [DataMember]
-    public double? LockExpiresAt { get; set; }
+    public double? LockExpiresAt { get; init; }
 
     /// <summary>
     /// Status message.
     /// </summary>
-    [DataMember]
-    public string? Message { get; set; }
+    public string? Message { get; init; }
 }
 
 /// <summary>
 /// Request model for Acknowledge operation.
 /// </summary>
-[DataContract]
-public class AcknowledgeRequest
+public record AcknowledgeRequest
 {
     /// <summary>
     /// Lock ID to acknowledge.
     /// </summary>
-    [DataMember]
-    public string LockId { get; set; } = string.Empty;
+    public string LockId { get; init; } = string.Empty;
 }
 
 /// <summary>
 /// Response model for Acknowledge operation.
 /// </summary>
-[DataContract]
-public class AcknowledgeResponse
+public record AcknowledgeResponse
 {
     /// <summary>
     /// Whether the acknowledgement was successful.
     /// </summary>
-    [DataMember]
-    public bool Success { get; set; }
+    public bool Success { get; init; }
 
     /// <summary>
     /// Status message.
     /// </summary>
-    [DataMember]
-    public string Message { get; set; } = string.Empty;
+    public string Message { get; init; } = string.Empty;
 
     /// <summary>
     /// Number of items acknowledged.
     /// </summary>
-    [DataMember]
-    public int ItemsAcknowledged { get; set; }
+    public int ItemsAcknowledged { get; init; }
 
     /// <summary>
     /// Error code (if not successful).
     /// </summary>
-    [DataMember]
-    public string? ErrorCode { get; set; }
+    public string? ErrorCode { get; init; }
 }

@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PushPopActor.Interfaces\PushPopActor.Interfaces.csproj" />
+    <ProjectReference Include="..\..\src\PushPopActor.ApiServer\PushPopActor.ApiServer.csproj" />
   </ItemGroup>
 
 </Project>

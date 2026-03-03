@@ -32,7 +32,5 @@ public class DebugTest
         Console.WriteLine($"Push: {response.StatusCode} - {content}");
 
         Assert.True(response.IsSuccessStatusCode, $"Failed with: {content}");
-
-        Thread.Sleep(TimeSpan.FromSeconds(60));
     }
 }

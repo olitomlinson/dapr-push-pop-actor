@@ -1,7 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using PushPopActor.IntegrationTests.Fixtures;
-using PushPopActor.Interfaces;
+using PushPopActor.ApiServer.Models;
 
 namespace PushPopActor.IntegrationTests.Tests;
 
@@ -23,8 +23,8 @@ public class FifoOrderingTests
         var expectedIds = new List<int>();
         for (int i = 0; i < 10; i++)
         {
-            var itemJson = JsonSerializer.Serialize(new { id = i, value = $"item-{i}" });
-            var pushRequest = new { item = JsonDocument.Parse(itemJson).RootElement, priority = 1 };
+            var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
+            var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
 
             var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
             var content = await response.Content.ReadAsStringAsync();
@@ -43,18 +43,16 @@ public class FifoOrderingTests
             var response = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
             response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<PopResponse>();
+            var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
             Assert.NotNull(result);
-            Assert.NotNull(result.ItemJson);
+            Assert.NotNull(result.Item);
 
-            var item = JsonSerializer.Deserialize<JsonElement>(result.ItemJson);
+            var item = (JsonElement)result.Item;
             actualIds.Add(item.GetProperty("id").GetInt32());
         }
 
         // Assert - Verify FIFO ordering
         Assert.Equal(expectedIds, actualIds);
-
-        Task.Delay(TimeSpan.FromMinutes(2));
     }
 
     [Fact]
@@ -64,8 +62,8 @@ public class FifoOrderingTests
         var expectedIds = new List<int>();
         for (int i = 0; i < 100; i++)
         {
-            var itemJson = JsonSerializer.Serialize(new { id = i, value = $"item-{i}" });
-            var pushRequest = new { item = JsonDocument.Parse(itemJson).RootElement, priority = 1 };
+            var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
+            var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
 
             var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
             response.EnsureSuccessStatusCode();
@@ -80,11 +78,11 @@ public class FifoOrderingTests
             var response = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
             response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<PopResponse>();
+            var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
             Assert.NotNull(result);
-            Assert.NotNull(result.ItemJson);
+            Assert.NotNull(result.Item);
 
-            var item = JsonSerializer.Deserialize<JsonElement>(result.ItemJson);
+            var item = (JsonElement)result.Item;
             actualIds.Add(item.GetProperty("id").GetInt32());
         }
 
@@ -105,34 +103,34 @@ public class FifoOrderingTests
 
         // Assert - Should succeed with null result
         response.EnsureSuccessStatusCode();
-        var result = await response.Content.ReadFromJsonAsync<PopResponse>();
+        var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
         Assert.NotNull(result);
-        Assert.Null(result.ItemJson);
+        Assert.Null(result.Item);
     }
 
     [Fact]
     public async Task PushOneItem_PopTwice_SecondPopReturnsEmpty()
     {
         // Arrange - Push 1 item
-        var itemJson = JsonSerializer.Serialize(new { id = 1, value = "single-item" });
-        var pushRequest = new { item = JsonDocument.Parse(itemJson).RootElement, priority = 1 };
+        var itemElement = JsonSerializer.SerializeToElement(new { id = 1, value = "single-item" });
+        var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
         var pushResponse = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
         pushResponse.EnsureSuccessStatusCode();
 
         // Act - Pop twice
         var firstPop = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
         firstPop.EnsureSuccessStatusCode();
-        var firstResult = await firstPop.Content.ReadFromJsonAsync<PopResponse>();
+        var firstResult = await firstPop.Content.ReadFromJsonAsync<ApiPopResponse>();
 
         var secondPop = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
         secondPop.EnsureSuccessStatusCode();
-        var secondResult = await secondPop.Content.ReadFromJsonAsync<PopResponse>();
+        var secondResult = await secondPop.Content.ReadFromJsonAsync<ApiPopResponse>();
 
         // Assert
         Assert.NotNull(firstResult);
-        Assert.NotNull(firstResult.ItemJson);
+        Assert.NotNull(firstResult.Item);
 
         Assert.NotNull(secondResult);
-        Assert.Null(secondResult.ItemJson);
+        Assert.Null(secondResult.Item);
     }
 }

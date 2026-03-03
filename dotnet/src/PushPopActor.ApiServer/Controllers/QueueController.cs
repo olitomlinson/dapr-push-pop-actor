@@ -4,6 +4,7 @@ using Dapr.Actors.Client;
 using Microsoft.AspNetCore.Mvc;
 using PushPopActor.Interfaces;
 using PushPopActor.ApiServer.Constants;
+using PushPopActor.ApiServer.Models;
 
 namespace PushPopActor.ApiServer.Controllers;
 
@@ -30,7 +31,7 @@ public class QueueController : ControllerBase
         {
             if (request.Priority < 0)
             {
-                return BadRequest(new { success = false, message = "Priority must be non-negative" });
+                return BadRequest(new ApiErrorResponse("Priority must be non-negative"));
             }
 
             _logger.LogDebug($"Push request for queue {queueId} with priority {request.Priority}");
@@ -51,19 +52,18 @@ public class QueueController : ControllerBase
 
             if (result.Success)
             {
-                return Ok(new
-                {
-                    success = true,
-                    message = $"Item pushed to queue {queueId} at priority {request.Priority}"
-                });
+                return Ok(new ApiPushResponse(
+                    true,
+                    $"Item pushed to queue {queueId} at priority {request.Priority}"
+                ));
             }
 
-            return BadRequest(new { success = false, message = "Failed to push item" });
+            return BadRequest(new ApiErrorResponse("Failed to push item"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error pushing item to queue {queueId}");
-            return StatusCode(500, new { success = false, message = $"Internal error: {ex.Message}" });
+            return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
         }
     }
 
@@ -95,11 +95,10 @@ public class QueueController : ControllerBase
                 // If locked by another operation, return 423 Locked
                 if (result.Locked && result.ItemJson == null)
                 {
-                    return StatusCode(423, new
-                    {
-                        message = result.Message,
-                        lock_expires_at = result.LockExpiresAt
-                    });
+                    return StatusCode(423, new ApiLockedResponse(
+                        result.Message,
+                        result.LockExpiresAt
+                    ));
                 }
 
                 // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
@@ -109,14 +108,13 @@ public class QueueController : ControllerBase
                     item = JsonDocument.Parse(result.ItemJson).RootElement;
                 }
 
-                return Ok(new
-                {
+                return Ok(new ApiPopWithAckResponse(
                     item,
-                    locked = result.Locked,
-                    lock_id = result.LockId,
-                    lock_expires_at = result.LockExpiresAt,
-                    message = result.Message
-                });
+                    result.Locked,
+                    result.LockId,
+                    result.LockExpiresAt,
+                    result.Message
+                ));
             }
             else
             {
@@ -129,13 +127,13 @@ public class QueueController : ControllerBase
                     item = JsonDocument.Parse(result.ItemJson).RootElement;
                 }
 
-                return Ok(new { item });
+                return Ok(new ApiPopResponse(item));
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error popping item from queue {queueId}");
-            return StatusCode(500, new { message = $"Internal error: {ex.Message}" });
+            return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
         }
     }
 
@@ -164,12 +162,11 @@ public class QueueController : ControllerBase
             // Check for error codes
             if (!result.Success)
             {
-                var response = new
-                {
-                    success = result.Success,
-                    message = result.Message,
-                    error_code = result.ErrorCode
-                };
+                var response = new ApiAcknowledgeResponse(
+                    result.Success,
+                    result.Message,
+                    ErrorCode: result.ErrorCode
+                );
 
                 // Return 410 Gone if lock expired
                 if (result.ErrorCode == "LOCK_EXPIRED")
@@ -193,27 +190,16 @@ public class QueueController : ControllerBase
                 return BadRequest(response);
             }
 
-            return Ok(new
-            {
-                success = result.Success,
-                message = result.Message,
-                items_acknowledged = result.ItemsAcknowledged
-            });
+            return Ok(new ApiAcknowledgeResponse(
+                result.Success,
+                result.Message,
+                result.ItemsAcknowledged
+            ));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error acknowledging items for queue {queueId}");
-            return StatusCode(500, new { message = $"Internal error: {ex.Message}" });
+            return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
         }
     }
 }
-
-// Request/Response models for API endpoints
-public record ApiPushRequest(
-    JsonElement Item,
-    int Priority = 1
-);
-
-public record ApiAcknowledgeRequest(
-    string LockId
-);
