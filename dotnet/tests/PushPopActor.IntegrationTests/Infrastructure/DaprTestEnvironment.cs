@@ -9,6 +9,9 @@ namespace PushPopActor.IntegrationTests.Infrastructure;
 /// <summary>
 /// Complete Dapr test environment with TestContainers
 /// Spins up PostgreSQL, Dapr placement/scheduler, Dapr sidecar, and API server
+///
+/// To enable container logs output to console, set the environment variable:
+/// ENABLE_CONTAINER_LOGS=true dotnet test
 /// </summary>
 public class DaprTestEnvironment : IAsyncLifetime
 {
@@ -30,6 +33,9 @@ public class DaprTestEnvironment : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        // Check if container logs should be redirected to console
+        var enableContainerLogs = Environment.GetEnvironmentVariable("ENABLE_CONTAINER_LOGS")?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+
         // Create a custom Docker network for all containers
         _network = new NetworkBuilder()
             .WithName($"pushpop-test-{Guid.NewGuid():N}")
@@ -65,7 +71,7 @@ public class DaprTestEnvironment : IAsyncLifetime
         await Task.Delay(TimeSpan.FromSeconds(2));
 
         // 3. Start API server container WITHOUT wait strategy (will be ready after Dapr starts)
-        _apiServerContainer = new ContainerBuilder()
+        var apiServerBuilder = new ContainerBuilder()
             .WithImage("pushpop-api:test")
             .WithNetwork(_network)
             .WithNetworkAliases("api-server")
@@ -75,7 +81,19 @@ public class DaprTestEnvironment : IAsyncLifetime
             // Tell the API server where to find Dapr sidecar on the Docker network using FULL endpoint URLs
             .WithEnvironment("DAPR_HTTP_ENDPOINT", "http://dapr-sidecar:3500")
             .WithEnvironment("DAPR_GRPC_ENDPOINT", "http://dapr-sidecar:50001")
-            .Build();
+            // Configure logging for integration tests
+            .WithEnvironment("Logging__LogLevel__Default", "Warning")
+            .WithEnvironment("Logging__LogLevel__PushPopActor", "Debug")
+            .WithEnvironment("Logging__LogLevel__PushPopActor.ApiServer", "Debug")
+            .WithEnvironment("Logging__LogLevel__Microsoft.AspNetCore", "Warning");
+
+        // Conditionally redirect container logs to console
+        if (enableContainerLogs)
+        {
+            apiServerBuilder = apiServerBuilder.WithOutputConsumer(Consume.RedirectStdoutAndStderrToConsole());
+        }
+
+        _apiServerContainer = apiServerBuilder.Build();
 
         await _apiServerContainer.StartAsync();
 
@@ -90,7 +108,7 @@ public class DaprTestEnvironment : IAsyncLifetime
         var testProjectRoot = Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..");
         var componentsPath = Path.GetFullPath(Path.Combine(testProjectRoot, "dapr-components"));
 
-        _daprSidecarContainer = new ContainerBuilder()
+        var daprSidecarBuilder = new ContainerBuilder()
             .WithImage("daprio/daprd:1.17.0")
             .WithNetwork(_network)
             .WithNetworkAliases("dapr-sidecar")
@@ -101,11 +119,19 @@ public class DaprTestEnvironment : IAsyncLifetime
                 "--dapr-http-port", "3500",
                 "--dapr-grpc-port", "50001",
                 "--placement-host-address", "dapr-placement:50005",
-                "--resources-path", "/tmp/dapr-components")
+                "--resources-path", "/tmp/dapr-components",
+                "--log-level", "info")  // Enable debug logging for Dapr
             .WithBindMount(componentsPath, "/tmp/dapr-components")
             .WithPortBinding(3500, true)
-            .WithPortBinding(50001, true)
-            .Build();
+            .WithPortBinding(50001, true);
+
+        // Conditionally redirect container logs to console
+        if (enableContainerLogs)
+        {
+            daprSidecarBuilder = daprSidecarBuilder.WithOutputConsumer(Consume.RedirectStdoutAndStderrToConsole());
+        }
+
+        _daprSidecarContainer = daprSidecarBuilder.Build();
 
         await _daprSidecarContainer.StartAsync();
 
