@@ -7,10 +7,10 @@ A simple, priority-based FIFO queue implementation. Store and retrieve JSON-payl
 This API provides a ready-to-use queue abstraction that:
 
 - **Just Works**: Two methods (`Push`, `Pop`) - that's it.
-- **Priority Support**: Route urgent tasks ahead of normal ones (0 = highest priority, default: 1).
-- **Flexible**: Use via A HTTP API, or direct via Dapr Actor SDK (JavaScript, Python, Java, Dotnet, Go)
-- **Acknowledgements (optional)**: User can request that `Pop` requires a follow-on `Ack` - If the `Ack` is not recieved within a timeout period, the message is made available at the next `pop`.
-- **Scalable**: Built on top of Dapr Actors, giving out-of-the-box Highly Availablilty and Horizontal scaling.
+- **Priority Support**: Route urgent messages ahead of normal ones (0 = highest priority, default: 1).
+- **Flexible**: Use via a HTTP API, or direct via Dapr Actor SDK (JavaScript, Python, Java, Dotnet, Go)
+- **Acknowledgements / at-least-once delivery**: User can optionally specifiy that `Pop` requires a follow-on `Ack` - If the `Ack` is not recieved within a timeout period, the message is made available at the next `pop`.
+- **Scalable**: Built on top of Dapr Actors, giving out-of-the-box High Availablilty and Horizontal scaling.
 - **Persistent**: Backed by any Dapr state store (PostgreSQL, Redis, Cosmos DB, etc.)
 
 Perfect for task scheduling, message buffering, event sourcing, or any scenario where you need ordered, priority-based processing with strict transactional gaurantees.
