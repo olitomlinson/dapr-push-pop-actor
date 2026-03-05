@@ -37,6 +37,12 @@ curl -X POST http://localhost:8000/queue/my-queue/push \
 curl -X POST "http://localhost:8000/queue/my-queue/pop"
 ```
 
+### Run integration tests
+
+```bash
+./build-and-test.sh --enable-logs --queue-id my-unique-test-run
+```
+
 **See [docs/QUICKSTART.md](docs/QUICKSTART.md) for complete setup instructions and examples.**
 
 ## Use Cases

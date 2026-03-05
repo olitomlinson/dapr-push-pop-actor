@@ -13,6 +13,20 @@ public class DaprTestFixture : IAsyncLifetime
     public HttpClient DaprSidecarClient => Environment.DaprSidecarClient;
     public DaprActorHttpClient ActorClient { get; private set; } = null!;
 
+    /// <summary>
+    /// Queue ID for tests - read from environment variable or generated as random GUID
+    /// </summary>
+    public string QueueId { get; private set; }
+
+    public DaprTestFixture()
+    {
+        // Read queue ID from environment variable, fallback to random GUID
+        var envQueueId = System.Environment.GetEnvironmentVariable("PUSHPOPACTOR_TEST_QUEUE_ID");
+        QueueId = !string.IsNullOrEmpty(envQueueId)
+            ? envQueueId
+            : $"test-queue-{Guid.NewGuid():N}";
+    }
+
     public async Task InitializeAsync()
     {
         Environment = new DaprTestEnvironment();

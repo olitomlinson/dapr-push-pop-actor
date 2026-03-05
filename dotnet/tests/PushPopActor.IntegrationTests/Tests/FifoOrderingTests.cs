@@ -6,15 +6,8 @@ using PushPopActor.ApiServer.Models;
 namespace PushPopActor.IntegrationTests.Tests;
 
 [Collection("Dapr Collection")]
-public class FifoOrderingTests
+public class FifoOrderingTests(DaprTestFixture fixture)
 {
-    private readonly DaprTestFixture _fixture;
-    private readonly string _queueId = $"test-queue-{Guid.NewGuid():N}";
-
-    public FifoOrderingTests(DaprTestFixture fixture)
-    {
-        _fixture = fixture;
-    }
 
     [Fact]
     public async Task Push10Items_PopAll_ReturnsInCorrectFifoOrder()
@@ -26,7 +19,7 @@ public class FifoOrderingTests
             var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
             var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
 
-            var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
+            var response = await fixture.ApiClient.PostAsJsonAsync($"/queue/{fixture.QueueId}/push", pushRequest);
             var content = await response.Content.ReadAsStringAsync();
             Assert.True(response.IsSuccessStatusCode, $"Push #{i} failed: {response.StatusCode} - {content}");
 
@@ -40,7 +33,7 @@ public class FifoOrderingTests
         var actualIds = new List<int>();
         for (int i = 0; i < 10; i++)
         {
-            var response = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+            var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
@@ -65,7 +58,7 @@ public class FifoOrderingTests
             var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
             var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
 
-            var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
+            var response = await fixture.ApiClient.PostAsJsonAsync($"/queue/{fixture.QueueId}/push", pushRequest);
             response.EnsureSuccessStatusCode();
 
             expectedIds.Add(i);
@@ -75,7 +68,7 @@ public class FifoOrderingTests
         var actualIds = new List<int>();
         for (int i = 0; i < 100; i++)
         {
-            var response = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+            var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
@@ -99,7 +92,7 @@ public class FifoOrderingTests
         // Arrange - Don't push anything
 
         // Act - Try to pop from empty queue
-        var response = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+        var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
 
         // Assert - Should succeed with null result
         response.EnsureSuccessStatusCode();
@@ -114,15 +107,15 @@ public class FifoOrderingTests
         // Arrange - Push 1 item
         var itemElement = JsonSerializer.SerializeToElement(new { id = 1, value = "single-item" });
         var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
-        var pushResponse = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
+        var pushResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{fixture.QueueId}/push", pushRequest);
         pushResponse.EnsureSuccessStatusCode();
 
         // Act - Pop twice
-        var firstPop = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+        var firstPop = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
         firstPop.EnsureSuccessStatusCode();
         var firstResult = await firstPop.Content.ReadFromJsonAsync<ApiPopResponse>();
 
-        var secondPop = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+        var secondPop = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
         secondPop.EnsureSuccessStatusCode();
         var secondResult = await secondPop.Content.ReadFromJsonAsync<ApiPopResponse>();
 
@@ -149,7 +142,7 @@ public class FifoOrderingTests
             var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
             var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
 
-            var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
+            var response = await fixture.ApiClient.PostAsJsonAsync($"/queue/{fixture.QueueId}/push", pushRequest);
             response.EnsureSuccessStatusCode();
 
             expectedIds.Add(i);
@@ -162,7 +155,7 @@ public class FifoOrderingTests
         var actualIds = new List<int>();
         for (int i = 0; i < 300; i++)
         {
-            var response = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+            var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
@@ -177,7 +170,7 @@ public class FifoOrderingTests
         Assert.Equal(expectedIds, actualIds);
 
         // Verify queue is now empty
-        var emptyPopResponse = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+        var emptyPopResponse = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
         emptyPopResponse.EnsureSuccessStatusCode();
         var emptyResult = await emptyPopResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
         Assert.NotNull(emptyResult);
@@ -198,7 +191,7 @@ public class FifoOrderingTests
         // - Segment 9 (tail) remains in actor state
         // When we pop 800 items, we'll load segments 2-8 from external storage
 
-        var queueId = $"soft-delete-test-{Guid.NewGuid():N}";
+        var queueId = $"{fixture.QueueId}-segment-delete-test-{Guid.NewGuid():N}";
 
         // Arrange - Push 1000 items to trigger offloading
         for (int i = 0; i < 1000; i++)
@@ -206,7 +199,7 @@ public class FifoOrderingTests
             var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
             var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
 
-            var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/push", pushRequest);
+            var response = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/push", pushRequest);
             response.EnsureSuccessStatusCode();
         }
 
@@ -233,7 +226,7 @@ public class FifoOrderingTests
         // Act - Pop 800 items (will load segments 2-8 from external storage, queue them for deletion)
         for (int i = 0; i < 800; i++)
         {
-            var response = await _fixture.ApiClient.PostAsync($"/queue/{queueId}/pop?require_ack=false", null);
+            var response = await fixture.ApiClient.PostAsync($"/queue/{queueId}/pop?require_ack=false", null);
             response.EnsureSuccessStatusCode();
         }
 
@@ -247,24 +240,43 @@ public class FifoOrderingTests
         Assert.NotNull(segment8AfterPop); // Should still exist (queued, not deleted)
 
         // Verify segments are in the deletion queue
-        var deletionMetadata = await _fixture.ActorClient.GetActorStateAsync<dynamic>(queueId, "segment_deletion_metadata");
+        var deletionMetadata = await fixture.ActorClient.GetActorStateAsync<dynamic>(queueId, "segment_deletion_metadata");
         Assert.NotNull(deletionMetadata);
         // Note: We can't easily deserialize the dynamic type structure, but we verified it exists
 
-        // Wait for cleanup timer to run (timer fires every 60 seconds)
+        // Poll for segment deletion (cleanup timer fires every 60 seconds)
         // With SEGMENT_DELETION_RETENTION_SECONDS=0, segments should be deleted on first run
-        await Task.Delay(TimeSpan.FromSeconds(70));
+        // Poll every 5 seconds with 70 second timeout
+        var timeout = TimeSpan.FromSeconds(70);
+        var pollInterval = TimeSpan.FromSeconds(5);
+        var startTime = DateTime.UtcNow;
+
+        string? segment2After = null;
+        string? segment5After = null;
+        string? segment8After = null;
+
+        while (DateTime.UtcNow - startTime < timeout)
+        {
+            segment2After = await GetStateStoreValueAsync(offloadedSegmentKey2);
+            segment5After = await GetStateStoreValueAsync(offloadedSegmentKey5);
+            segment8After = await GetStateStoreValueAsync(offloadedSegmentKey8);
+
+            if (segment2After == null && segment5After == null && segment8After == null)
+            {
+                // All segments deleted successfully
+                break;
+            }
+
+            await Task.Delay(pollInterval);
+        }
 
         // Assert - Segments 2-8 should now be deleted from external state store
-        var segment2After = await GetStateStoreValueAsync(offloadedSegmentKey2);
-        var segment5After = await GetStateStoreValueAsync(offloadedSegmentKey5);
-        var segment8After = await GetStateStoreValueAsync(offloadedSegmentKey8);
         Assert.Null(segment2After); // Should be deleted
         Assert.Null(segment5After); // Should be deleted
         Assert.Null(segment8After); // Should be deleted
 
         // Verify deletion queue is empty
-        var deletionMetadataAfter = await _fixture.ActorClient.GetActorStateAsync<dynamic>(queueId, "segment_deletion_metadata");
+        var deletionMetadataAfter = await fixture.ActorClient.GetActorStateAsync<dynamic>(queueId, "segment_deletion_metadata");
         // Queue should either be empty or not exist
         var isEmptyOrNull = deletionMetadataAfter is null ||
                            deletionMetadataAfter.ToString().Contains("[]") ||
@@ -280,7 +292,7 @@ public class FifoOrderingTests
     private async Task<string?> GetStateStoreValueAsync(string key)
     {
         var url = $"/v1.0/state/statestore/{key}";
-        var response = await _fixture.DaprSidecarClient.GetAsync(url);
+        var response = await fixture.DaprSidecarClient.GetAsync(url);
 
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent ||
             response.StatusCode == System.Net.HttpStatusCode.NotFound)

@@ -20,6 +20,8 @@ SKIP_PUSH="${SKIP_PUSH:-true}"
 SKIP_TESTS="${SKIP_TESTS:-false}"
 DOCKER_REGISTRY="${DOCKER_REGISTRY:-}"
 VERBOSE="${VERBOSE:-false}"
+QUEUE_ID="${QUEUE_ID:-}"
+ENABLE_CONTAINER_LOGS="${ENABLE_CONTAINER_LOGS:-false}"
 
 # Parse command line arguments
 show_help() {
@@ -33,9 +35,11 @@ OPTIONS:
     -t, --tag TAG           Docker image tag (default: latest)
     -r, --registry REGISTRY Docker registry URL (e.g., ghcr.io/username)
     -p, --push              Push Docker image to registry
+    -q, --queue-id ID       Queue ID for tests (default: random UUID)
     --skip-build            Skip Docker image build
     --skip-push             Skip Docker image push (default)
     --skip-tests            Skip integration tests
+    --enable-logs           Enable container logs in tests
     -v, --verbose           Enable verbose output
 
 EXAMPLES:
@@ -51,6 +55,12 @@ EXAMPLES:
     # Build only (skip tests)
     $0 --skip-tests
 
+    # Run tests with specific queue ID
+    $0 --queue-id my-test-queue
+
+    # Run tests with container logs enabled
+    $0 --enable-logs
+
 ENVIRONMENT VARIABLES:
     DOCKER_IMAGE_TAG        Override image tag
     DOCKER_REGISTRY         Override registry
@@ -58,6 +68,8 @@ ENVIRONMENT VARIABLES:
     SKIP_PUSH               Skip push step (true/false)
     SKIP_TESTS              Skip tests (true/false)
     VERBOSE                 Enable verbose output (true/false)
+    QUEUE_ID                Queue ID for tests (random if not set)
+    ENABLE_CONTAINER_LOGS   Enable container logs (true/false, default: false)
 
 EOF
 }
@@ -81,6 +93,10 @@ while [[ $# -gt 0 ]]; do
             SKIP_PUSH="false"
             shift
             ;;
+        -q|--queue-id)
+            QUEUE_ID="$2"
+            shift 2
+            ;;
         --skip-build)
             SKIP_BUILD="true"
             shift
@@ -91,6 +107,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --skip-tests)
             SKIP_TESTS="true"
+            shift
+            ;;
+        --enable-logs)
+            ENABLE_CONTAINER_LOGS="true"
             shift
             ;;
         -v|--verbose)
@@ -223,6 +243,14 @@ run_integration_tests() {
 
     log_info "Test project: dotnet/tests/PushPopActor.IntegrationTests"
 
+    # Generate random queue ID if not provided
+    if [[ -z "$QUEUE_ID" ]]; then
+        QUEUE_ID="test-queue-$(uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-')"
+        log_info "Generated queue ID: $QUEUE_ID"
+    else
+        log_info "Using queue ID: $QUEUE_ID"
+    fi
+
     cd "$SCRIPT_DIR/dotnet"
 
     local test_args=(
@@ -245,7 +273,7 @@ run_integration_tests() {
     log_info "Running: dotnet ${test_args[*]}"
     echo ""
 
-    if dotnet "${test_args[@]}"; then
+    if PUSHPOPACTOR_TEST_QUEUE_ID="$QUEUE_ID" ENABLE_CONTAINER_LOGS="$ENABLE_CONTAINER_LOGS" dotnet "${test_args[@]}"; then
         log_success "All integration tests passed!"
     else
         log_error "Integration tests failed"
@@ -274,6 +302,10 @@ main() {
     log_info "  Skip Push: $SKIP_PUSH"
     log_info "  Skip Tests: $SKIP_TESTS"
     log_info "  Verbose: $VERBOSE"
+    log_info "  Enable Container Logs: $ENABLE_CONTAINER_LOGS"
+    if [[ -n "$QUEUE_ID" ]]; then
+        log_info "  Queue ID: $QUEUE_ID"
+    fi
 
     check_prerequisites
 
