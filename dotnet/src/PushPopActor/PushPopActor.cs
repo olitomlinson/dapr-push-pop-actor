@@ -915,12 +915,12 @@ public class PushPopActor : Actor, IPushPopActor
             Logger.LogDebug($"[OFFLOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
                 $"Offloading to key '{offloadKey}'");
 
-            // Serialize segment data to JSON
-            string segmentJson = JsonSerializer.Serialize(segmentData);
+            // Serialize segment data to UTF-8 byte array
+            byte[] segmentBytes = JsonSerializer.SerializeToUtf8Bytes(segmentData);
 
-            // Save to state store using DaprClient
+            // Save to state store using DaprClient (raw bytes - no double serialization)
             using var client = new DaprClientBuilder().Build();
-            await client.SaveStateAsync("statestore", offloadKey, segmentJson);
+            await client.SaveByteStateAsync("statestore", offloadKey, segmentBytes);
 
             // Add to offloaded range in metadata
             var updatedMetadata = AddOffloadedSegment(metadata, priority, segmentNum);
@@ -958,11 +958,11 @@ public class PushPopActor : Actor, IPushPopActor
             Logger.LogDebug($"[LOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
                 $"Loading from key '{offloadKey}'");
 
-            // Load from state store
+            // Load segment from external state store
             using var client = new DaprClientBuilder().Build();
-            var result = await client.GetStateAsync<string>("statestore", offloadKey);
+            var result = await client.GetByteStateAsync("statestore", offloadKey);
 
-            if (string.IsNullOrEmpty(result))
+            if (result.IsEmpty)
             {
                 // Store error in metadata using record 'with' syntax
                 string errorMsg = $"CORRUPTED: Segment {segmentNum} priority {priority} missing from external store. " +
@@ -980,8 +980,8 @@ public class PushPopActor : Actor, IPushPopActor
                 throw new InvalidOperationException(errorMsg);
             }
 
-            // Deserialize from JSON
-            var segmentData = JsonSerializer.Deserialize<Queue<string>>(result);
+            // Deserialize from UTF-8 bytes
+            var segmentData = JsonSerializer.Deserialize<Queue<string>>(result.Span);
 
             if (segmentData == null || segmentData.Count == 0)
             {

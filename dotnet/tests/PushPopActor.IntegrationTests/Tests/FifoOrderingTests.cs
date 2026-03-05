@@ -133,4 +133,54 @@ public class FifoOrderingTests
         Assert.NotNull(secondResult);
         Assert.Null(secondResult.Item);
     }
+
+    [Fact]
+    public async Task Push300Items_PopAll_VerifiesOffloadLoadCycle_MaintainsFifoOrder()
+    {
+        // This test validates the byte[] serialization optimization for offload/load
+        // With 300 items and default buffer_segments=1, segments beyond the buffer zone
+        // will be offloaded to external state store using SaveByteStateAsync
+        // When popping, segments are loaded back using GetByteStateAsync
+
+        // Arrange - Push 300 items with sequential IDs
+        var expectedIds = new List<int>();
+        for (int i = 0; i < 300; i++)
+        {
+            var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
+            var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
+
+            var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{_queueId}/push", pushRequest);
+            response.EnsureSuccessStatusCode();
+
+            expectedIds.Add(i);
+        }
+
+        // Give actors time to process and offload segments
+        await Task.Delay(TimeSpan.FromSeconds(5));
+
+        // Act - Pop all 300 items (will trigger segment loading from external store)
+        var actualIds = new List<int>();
+        for (int i = 0; i < 300; i++)
+        {
+            var response = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
+            Assert.NotNull(result);
+            Assert.NotNull(result.Item);
+
+            var item = (JsonElement)result.Item;
+            actualIds.Add(item.GetProperty("id").GetInt32());
+        }
+
+        // Assert - Verify FIFO ordering maintained through offload/load cycle
+        Assert.Equal(expectedIds, actualIds);
+
+        // Verify queue is now empty
+        var emptyPopResponse = await _fixture.ApiClient.PostAsync($"/queue/{_queueId}/pop?require_ack=false", null);
+        emptyPopResponse.EnsureSuccessStatusCode();
+        var emptyResult = await emptyPopResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
+        Assert.NotNull(emptyResult);
+        Assert.Null(emptyResult.Item);
+    }
 }
