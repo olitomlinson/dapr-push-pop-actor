@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy all source code
-COPY dotnet/src/ ./src/
+COPY src/ ./src/
 
 # Restore and build
 WORKDIR /src/src/PushPopActor.ApiServer

@@ -206,7 +206,7 @@ build_docker_image() {
         build_args+=("--progress=plain")
     fi
 
-    build_args+=("$SCRIPT_DIR")
+    build_args+=("$SCRIPT_DIR/dotnet")
 
     if docker "${build_args[@]}"; then
         log_success "Docker image built successfully: $FULL_IMAGE_NAME"
