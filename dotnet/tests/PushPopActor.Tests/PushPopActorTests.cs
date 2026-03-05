@@ -45,6 +45,17 @@ public class PushPopActorTests
                 return new ConditionalValue<Queue<string>>(false, null);
             });
 
+        // Setup TryGetStateAsync for SegmentDeletionMetadata
+        mock.Setup(m => m.TryGetStateAsync<SegmentDeletionMetadata>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken ct) =>
+            {
+                if (stateData.ContainsKey(key) && stateData[key] is SegmentDeletionMetadata deletionMetadata)
+                {
+                    return new ConditionalValue<SegmentDeletionMetadata>(true, deletionMetadata);
+                }
+                return new ConditionalValue<SegmentDeletionMetadata>(false, null);
+            });
+
         // Setup SetStateAsync
         mock.Setup(m => m.SetStateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()))
             .Returns((string key, object value, CancellationToken ct) =>
@@ -70,7 +81,17 @@ public class PushPopActorTests
 
     private async Task<PushPopActor> CreateActorAsync(Mock<IActorStateManager> mockStateManager)
     {
-        var actorHost = ActorHost.CreateForTest<PushPopActor>();
+        // Create mock timer manager that no-ops timer registration
+        var mockTimerManager = new Mock<ActorTimerManager>();
+        mockTimerManager.Setup(m => m.RegisterTimerAsync(It.IsAny<ActorTimer>()))
+            .Returns(Task.CompletedTask);
+
+        var testOptions = new ActorTestOptions
+        {
+            TimerManager = mockTimerManager.Object
+        };
+
+        var actorHost = ActorHost.CreateForTest<PushPopActor>(testOptions);
         var actor = new PushPopActor(actorHost);
 
         // Use reflection to set the StateManager property

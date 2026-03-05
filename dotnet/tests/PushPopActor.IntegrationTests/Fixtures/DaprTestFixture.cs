@@ -10,6 +10,7 @@ public class DaprTestFixture : IAsyncLifetime
 {
     public DaprTestEnvironment Environment { get; private set; } = null!;
     public HttpClient ApiClient => Environment.ApiClient;
+    public HttpClient DaprSidecarClient => Environment.DaprSidecarClient;
     public DaprActorHttpClient ActorClient { get; private set; } = null!;
 
     public async Task InitializeAsync()

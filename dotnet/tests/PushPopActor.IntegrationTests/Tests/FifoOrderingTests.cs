@@ -183,4 +183,112 @@ public class FifoOrderingTests
         Assert.NotNull(emptyResult);
         Assert.Null(emptyResult.Item);
     }
+
+    [Fact]
+    public async Task Push1000Items_Pop800Items_VerifiesSoftDeleteCleanup()
+    {
+        // This test validates the soft-delete mechanism:
+        // 1. Offloaded segments are queued for deletion (not immediately deleted)
+        // 2. Cleanup timer runs and deletes segments after retention period
+        // 3. Segments are removed from external state store
+
+        // With 1000 items (10 segments of 100 each) and BufferSegments=1:
+        // - Segments 0-1 remain in actor state (headSegment + bufferSegments zone)
+        // - Segments 2-8 are offloaded to external storage (minOffload=2, maxOffload=9)
+        // - Segment 9 (tail) remains in actor state
+        // When we pop 800 items, we'll load segments 2-8 from external storage
+
+        var queueId = $"soft-delete-test-{Guid.NewGuid():N}";
+
+        // Arrange - Push 1000 items to trigger offloading
+        for (int i = 0; i < 1000; i++)
+        {
+            var itemElement = JsonSerializer.SerializeToElement(new { id = i, value = $"item-{i}" });
+            var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
+
+            var response = await _fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/push", pushRequest);
+            response.EnsureSuccessStatusCode();
+        }
+
+        // Wait for offloading to complete
+        await Task.Delay(TimeSpan.FromSeconds(10));
+
+        // At this point, segments 2-8 should be offloaded to external state store
+        // With BufferSegments=1, headSegment=0, tailSegment=9:
+        //   minOffload = 0 + 1 + 1 = 2
+        //   maxOffload = 9
+        // So segments 0-1 are in buffer (actor state), segments 2-8 are offloaded, segment 9 is tail (actor state)
+        var offloadedSegmentKey2 = $"offloaded_queue_1_seg_2_{queueId}";
+        var offloadedSegmentKey5 = $"offloaded_queue_1_seg_5_{queueId}";
+        var offloadedSegmentKey8 = $"offloaded_queue_1_seg_8_{queueId}";
+
+        // Verify segments exist in external state store before popping
+        var segment2Before = await GetStateStoreValueAsync(offloadedSegmentKey2);
+        var segment5Before = await GetStateStoreValueAsync(offloadedSegmentKey5);
+        var segment8Before = await GetStateStoreValueAsync(offloadedSegmentKey8);
+        Assert.NotNull(segment2Before!); // Segment 2 should exist
+        Assert.NotNull(segment5Before!); // Segment 5 should exist
+        Assert.NotNull(segment8Before!); // Segment 8 should exist
+
+        // Act - Pop 800 items (will load segments 2-8 from external storage, queue them for deletion)
+        for (int i = 0; i < 800; i++)
+        {
+            var response = await _fixture.ApiClient.PostAsync($"/queue/{queueId}/pop?require_ack=false", null);
+            response.EnsureSuccessStatusCode();
+        }
+
+        // Immediately after popping, segments should still exist in external storage
+        // (they're queued for deletion, not deleted immediately)
+        var segment2AfterPop = await GetStateStoreValueAsync(offloadedSegmentKey2);
+        var segment5AfterPop = await GetStateStoreValueAsync(offloadedSegmentKey5);
+        var segment8AfterPop = await GetStateStoreValueAsync(offloadedSegmentKey8);
+        Assert.NotNull(segment2AfterPop); // Should still exist (queued, not deleted)
+        Assert.NotNull(segment5AfterPop); // Should still exist (queued, not deleted)
+        Assert.NotNull(segment8AfterPop); // Should still exist (queued, not deleted)
+
+        // Verify segments are in the deletion queue
+        var deletionMetadata = await _fixture.ActorClient.GetActorStateAsync<dynamic>(queueId, "segment_deletion_metadata");
+        Assert.NotNull(deletionMetadata);
+        // Note: We can't easily deserialize the dynamic type structure, but we verified it exists
+
+        // Wait for cleanup timer to run (timer fires every 60 seconds)
+        // With SEGMENT_DELETION_RETENTION_SECONDS=0, segments should be deleted on first run
+        await Task.Delay(TimeSpan.FromSeconds(70));
+
+        // Assert - Segments 2-8 should now be deleted from external state store
+        var segment2After = await GetStateStoreValueAsync(offloadedSegmentKey2);
+        var segment5After = await GetStateStoreValueAsync(offloadedSegmentKey5);
+        var segment8After = await GetStateStoreValueAsync(offloadedSegmentKey8);
+        Assert.Null(segment2After); // Should be deleted
+        Assert.Null(segment5After); // Should be deleted
+        Assert.Null(segment8After); // Should be deleted
+
+        // Verify deletion queue is empty
+        var deletionMetadataAfter = await _fixture.ActorClient.GetActorStateAsync<dynamic>(queueId, "segment_deletion_metadata");
+        // Queue should either be empty or not exist
+        var isEmptyOrNull = deletionMetadataAfter is null ||
+                           deletionMetadataAfter.ToString().Contains("[]") ||
+                           deletionMetadataAfter.ToString().Contains("\"PendingDeletions\":[]");
+        Assert.True(isEmptyOrNull,
+            $"Expected deletion queue to be empty, but got: {deletionMetadataAfter?.ToString() ?? "null"}");
+    }
+
+    /// <summary>
+    /// Query Dapr state store directly using State Management API
+    /// GET /v1.0/state/{storeName}/{key}
+    /// </summary>
+    private async Task<string?> GetStateStoreValueAsync(string key)
+    {
+        var url = $"/v1.0/state/statestore/{key}";
+        var response = await _fixture.DaprSidecarClient.GetAsync(url);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent ||
+            response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync();
+    }
 }

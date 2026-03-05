@@ -2,11 +2,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-# Copy global.json for SDK version
-COPY global.json ./
-
 # Copy all source code
-COPY src/ ./src/
+COPY dotnet/src/ ./src/
 
 # Restore and build
 WORKDIR /src/src/PushPopActor.ApiServer

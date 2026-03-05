@@ -81,6 +81,8 @@ public class DaprTestEnvironment : IAsyncLifetime
             // Tell the API server where to find Dapr sidecar on the Docker network using FULL endpoint URLs
             .WithEnvironment("DAPR_HTTP_ENDPOINT", "http://dapr-sidecar:3500")
             .WithEnvironment("DAPR_GRPC_ENDPOINT", "http://dapr-sidecar:50001")
+            // Configure soft-delete retention for fast testing (0 seconds = immediate deletion)
+            .WithEnvironment("SEGMENT_DELETION_RETENTION_SECONDS", "0")
             // Configure logging for integration tests
             .WithEnvironment("Logging__LogLevel__Default", "Warning")
             .WithEnvironment("Logging__LogLevel__PushPopActor", "Debug")
