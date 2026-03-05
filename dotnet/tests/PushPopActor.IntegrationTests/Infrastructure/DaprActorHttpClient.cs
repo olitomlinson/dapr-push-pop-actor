@@ -56,20 +56,4 @@ public class DaprActorHttpClient
         var responseJson = await response.Content.ReadAsStringAsync();
         return JsonSerializer.Deserialize<TResponse>(responseJson)!;
     }
-
-    /// <summary>
-    /// Invoke actor method with no request body
-    /// POST /v1.0/actors/{actorType}/{actorId}/method/{methodName}
-    /// </summary>
-    public async Task<TResponse> InvokeActorMethodAsync<TResponse>(
-        string actorId,
-        string methodName)
-    {
-        var url = $"/v1.0/actors/{ActorType}/{actorId}/method/{methodName}";
-        var response = await _daprClient.PostAsync(url, null);
-        response.EnsureSuccessStatusCode();
-
-        var responseJson = await response.Content.ReadAsStringAsync();
-        return JsonSerializer.Deserialize<TResponse>(responseJson)!;
-    }
 }
