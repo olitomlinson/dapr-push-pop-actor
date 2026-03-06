@@ -10,11 +10,12 @@ namespace PushPopActor.IntegrationTests.Infrastructure;
 public class DaprActorHttpClient
 {
     private readonly HttpClient _daprClient;
-    private const string ActorType = "PushPopActor";
+    private readonly string _actorType;
 
-    public DaprActorHttpClient(HttpClient daprClient)
+    public DaprActorHttpClient(HttpClient daprClient, string actorType = "PushPopActor")
     {
         _daprClient = daprClient ?? throw new ArgumentNullException(nameof(daprClient));
+        _actorType = actorType;
     }
 
     /// <summary>
@@ -23,7 +24,7 @@ public class DaprActorHttpClient
     /// </summary>
     public async Task<T?> GetActorStateAsync<T>(string actorId, string stateKey)
     {
-        var url = $"/v1.0/actors/{ActorType}/{actorId}/state/{stateKey}";
+        var url = $"/v1.0/actors/{_actorType}/{actorId}/state/{stateKey}";
         var response = await _daprClient.GetAsync(url);
 
         if (response.StatusCode == System.Net.HttpStatusCode.NoContent ||

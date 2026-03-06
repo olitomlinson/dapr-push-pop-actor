@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using PushPopActor.Interfaces;
 using PushPopActor.ApiServer.Constants;
 using PushPopActor.ApiServer.Models;
+using PushPopActor.ApiServer.Configuration;
 
 namespace PushPopActor.ApiServer.Controllers;
 
@@ -13,10 +14,12 @@ namespace PushPopActor.ApiServer.Controllers;
 public class QueueController : ControllerBase
 {
     private readonly ILogger<QueueController> _logger;
+    private readonly ActorConfiguration _actorConfig;
 
-    public QueueController(ILogger<QueueController> logger)
+    public QueueController(ILogger<QueueController> logger, ActorConfiguration actorConfig)
     {
         _logger = logger;
+        _actorConfig = actorConfig;
     }
 
     /// <summary>
@@ -37,7 +40,7 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Push request for queue {queueId} with priority {request.Priority}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create(actorId, "PushPopActor");
+            var proxy = ActorProxy.Create(actorId, _actorConfig.ActorTypeName);
 
             // Get raw JSON string from JsonElement (no unnecessary deserialization)
             var itemJson = request.Item.GetRawText();
@@ -81,7 +84,7 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Pop request for queue {queueId}, require_ack={require_ack}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create(actorId, "PushPopActor");
+            var proxy = ActorProxy.Create(actorId, _actorConfig.ActorTypeName);
 
             if (require_ack)
             {
@@ -150,7 +153,7 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Acknowledge request for queue {queueId} with lock_id {request.LockId}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create(actorId, "PushPopActor");
+            var proxy = ActorProxy.Create(actorId, _actorConfig.ActorTypeName);
 
             var result = await proxy.InvokeMethodAsync<AcknowledgeRequest, AcknowledgeResponse>(
                 ActorMethodNames.Acknowledge,

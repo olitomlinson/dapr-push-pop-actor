@@ -1,13 +1,19 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Dapr.Actors;
-using Dapr.Actors.Client;
 using Dapr.Actors.Runtime;
+using PushPopActor.ApiServer.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
 builder.Services.AddControllers().AddDapr();
+
+// Configure actor settings
+var actorConfig = new ActorConfiguration
+{
+    ActorTypeName = builder.Configuration.GetValue("ACTOR_TYPE_NAME", "PushPopActor")
+};
+builder.Services.AddSingleton(actorConfig);
 
 // Add Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
@@ -22,7 +28,7 @@ if (registerActors)
 {
     builder.Services.AddActors(options =>
     {
-        options.Actors.RegisterActor<PushPopActor.PushPopActor>();
+        options.Actors.RegisterActor<PushPopActor.PushPopActor>(actorConfig.ActorTypeName);
 
         // Configure actor runtime settings
         options.ActorIdleTimeout = TimeSpan.FromSeconds(60);

@@ -87,7 +87,9 @@ public class DaprTestEnvironment : IAsyncLifetime
             .WithEnvironment("Logging__LogLevel__Default", "Warning")
             .WithEnvironment("Logging__LogLevel__PushPopActor", "Debug")
             .WithEnvironment("Logging__LogLevel__PushPopActor.ApiServer", "Debug")
-            .WithEnvironment("Logging__LogLevel__Microsoft.AspNetCore", "Warning");
+            .WithEnvironment("Logging__LogLevel__Microsoft.AspNetCore", "Warning")
+            // Allow optional override of actor type name via environment variable
+            .WithEnvironment("ACTOR_TYPE_NAME", Environment.GetEnvironmentVariable("ACTOR_TYPE_NAME") ?? "PushPopActor");
 
         // Conditionally redirect container logs to console
         if (enableContainerLogs)

@@ -32,7 +32,8 @@ public class DaprTestFixture : IAsyncLifetime
         Environment = new DaprTestEnvironment();
         await Environment.InitializeAsync();
 
-        ActorClient = new DaprActorHttpClient(Environment.DaprSidecarClient);
+        var actorTypeName = System.Environment.GetEnvironmentVariable("ACTOR_TYPE_NAME") ?? "PushPopActor";
+        ActorClient = new DaprActorHttpClient(Environment.DaprSidecarClient, actorTypeName);
     }
 
     public async Task DisposeAsync()

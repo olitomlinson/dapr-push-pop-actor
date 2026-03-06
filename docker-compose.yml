@@ -71,6 +71,7 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr:3502
       - REGISTER_ACTORS=true
+      - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
     ports:
       - "8000:8080"
     depends_on:
@@ -89,6 +90,7 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr-2:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-2:3502
       - REGISTER_ACTORS=true
+      - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
     ports:
       - "8001:8080"
     depends_on:
@@ -107,6 +109,7 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr-3:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-3:3502
       - REGISTER_ACTORS=false
+      - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
     ports:
       - "8002:8080"
     depends_on:
@@ -125,6 +128,7 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr-4:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-4:3502
       - REGISTER_ACTORS=true
+      - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
     ports:
       - "8003:8080"
     depends_on:
