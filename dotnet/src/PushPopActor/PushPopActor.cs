@@ -326,7 +326,13 @@ public class PushPopActor : Actor, IPushPopActor
                 if (now < lockData.ExpiresAt)
                 {
                     Logger.LogDebug("Queue is locked, cannot pop");
-                    return (new PopResponse { ItemJson = null }, -1);
+                    return (new PopResponse
+                    {
+                        ItemJson = null,
+                        Locked = true,
+                        Message = "Queue is locked by another operation",
+                        LockExpiresAt = lockData.ExpiresAt
+                    }, -1);
                 }
                 else
                 {
@@ -337,7 +343,7 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (metadata.Queues.Count == 0)
             {
-                return (new PopResponse { ItemJson = null }, -1);
+                return (new PopResponse { ItemJson = null, Locked = false }, -1);
             }
 
             // Find lowest priority with items
@@ -406,7 +412,7 @@ public class PushPopActor : Actor, IPushPopActor
                         Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                         // Return item JSON string directly with priority
-                        return (new PopResponse { ItemJson = itemJson }, priority);
+                        return (new PopResponse { ItemJson = itemJson, Locked = false }, priority);
                     }
                     else
                     {
@@ -422,7 +428,7 @@ public class PushPopActor : Actor, IPushPopActor
                         Logger.LogDebug($"Popped last item from priority {priority}, queue now empty");
 
                         // Return item JSON string directly with priority
-                        return (new PopResponse { ItemJson = itemJson }, priority);
+                        return (new PopResponse { ItemJson = itemJson, Locked = false }, priority);
                     }
                 }
                 else
@@ -442,11 +448,11 @@ public class PushPopActor : Actor, IPushPopActor
                     Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                     // Return item JSON string directly with priority
-                    return (new PopResponse { ItemJson = itemJson }, priority);
+                    return (new PopResponse { ItemJson = itemJson, Locked = false }, priority);
                 }
             }
 
-            return (new PopResponse { ItemJson = null }, -1);
+            return (new PopResponse { ItemJson = null, Locked = false }, -1);
         }
         catch (InvalidOperationException)
         {
@@ -456,7 +462,7 @@ public class PushPopActor : Actor, IPushPopActor
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in PopAsync");
-            return (new PopResponse { ItemJson = null }, -1);
+            return (new PopResponse { ItemJson = null, Locked = false }, -1);
         }
     }
 
@@ -504,7 +510,13 @@ public class PushPopActor : Actor, IPushPopActor
                 if (now < lockData.ExpiresAt)
                 {
                     Logger.LogDebug("Queue is locked, cannot peek");
-                    return (new PopResponse { ItemJson = null }, -1, -1);
+                    return (new PopResponse
+                    {
+                        ItemJson = null,
+                        Locked = true,
+                        Message = "Queue is locked by another operation",
+                        LockExpiresAt = lockData.ExpiresAt
+                    }, -1, -1);
                 }
                 else
                 {
@@ -517,7 +529,7 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (metadata.Queues.Count == 0)
             {
-                return (new PopResponse { ItemJson = null }, -1, -1);
+                return (new PopResponse { ItemJson = null, Locked = false }, -1, -1);
             }
 
             // Find lowest priority with items
@@ -552,15 +564,15 @@ public class PushPopActor : Actor, IPushPopActor
                 Logger.LogDebug($"Peeked item from priority {priority}, segment {headSegment}");
 
                 // Return item JSON string directly with priority and segment
-                return (new PopResponse { ItemJson = itemJson }, priority, headSegment);
+                return (new PopResponse { ItemJson = itemJson, Locked = false }, priority, headSegment);
             }
 
-            return (new PopResponse { ItemJson = null }, -1, -1);
+            return (new PopResponse { ItemJson = null, Locked = false }, -1, -1);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in PeekWithPriorityAsync");
-            return (new PopResponse { ItemJson = null }, -1, -1);
+            return (new PopResponse { ItemJson = null, Locked = false }, -1, -1);
         }
     }
 

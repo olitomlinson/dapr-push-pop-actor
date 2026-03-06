@@ -44,9 +44,24 @@ public record PopWithAckRequest
 public record PopResponse
 {
     /// <summary>
-    /// The popped item (as JSON string), or null if queue is empty.
+    /// The popped item (as JSON string), or null if queue is empty or locked.
     /// </summary>
     public string? ItemJson { get; init; }
+
+    /// <summary>
+    /// Whether the queue is locked.
+    /// </summary>
+    public bool Locked { get; init; }
+
+    /// <summary>
+    /// Status message.
+    /// </summary>
+    public string? Message { get; init; }
+
+    /// <summary>
+    /// Unix timestamp when lock expires.
+    /// </summary>
+    public double? LockExpiresAt { get; init; }
 }
 
 /// <summary>

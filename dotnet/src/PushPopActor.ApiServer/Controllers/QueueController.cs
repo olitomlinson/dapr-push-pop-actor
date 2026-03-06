@@ -123,6 +123,15 @@ public class QueueController : ControllerBase
             {
                 var result = await proxy.InvokeMethodAsync<PopResponse>(ActorMethodNames.Pop);
 
+                // If locked by another operation, return 423 Locked
+                if (result.Locked && result.ItemJson == null)
+                {
+                    return StatusCode(423, new ApiLockedResponse(
+                        result.Message,
+                        result.LockExpiresAt
+                    ));
+                }
+
                 // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
                 object? item = null;
                 if (result.ItemJson != null)
