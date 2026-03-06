@@ -97,7 +97,7 @@ public class PushPopActor : Actor, IPushPopActor
     private const string OffloadSegmentCleanupTimerName = "segment-cleanup-timer";
     private const int OffloadSegmentCleanupScanIntervalSeconds = 60;
     private const string OffloadSegmentCleanupMetadataKey = "segment_deletion_metadata";
-    private const int OffloadSegmentRetentionSeconds = 86400; // 24 hours
+    private const int OffloadSegmentRetentionSeconds = 60;
 
     private static bool IsQueueCorrupted(ActorMetadata metadata) =>
         !string.IsNullOrEmpty(metadata.ErrorMessage);

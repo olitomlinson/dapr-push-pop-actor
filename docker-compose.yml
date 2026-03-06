@@ -72,6 +72,7 @@ services:
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr:3502
       - REGISTER_ACTORS=true
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
+      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8000:8080"
     depends_on:
@@ -91,6 +92,7 @@ services:
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-2:3502
       - REGISTER_ACTORS=true
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
+      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8001:8080"
     depends_on:
@@ -110,6 +112,7 @@ services:
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-3:3502
       - REGISTER_ACTORS=false
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
+      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8002:8080"
     depends_on:
@@ -129,6 +132,7 @@ services:
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-4:3502
       - REGISTER_ACTORS=true
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
+      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8003:8080"
     depends_on:
