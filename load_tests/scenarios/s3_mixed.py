@@ -32,7 +32,7 @@ class MixedWorkloadUser(BasePushPopUser):
     """
 
     abstract = False
-    wait_time = between(0.5, 1.5)  # Average 1s between requests = ~1 RPS per user
+    wait_time = between(0.0, 0.0)  # Average 0.1s = ~10 RPS per user  # Average 1s between requests = ~1 RPS per user
 
     def on_start(self):
         """Initialize by pushing some items to ensure queue isn't empty."""
@@ -40,13 +40,13 @@ class MixedWorkloadUser(BasePushPopUser):
 
         # Push 10 items to start with
         for i in range(10):
-            self.push_item(priority=0)
+            self.push_item(priority=1)
 
     @task(50)
     def push_operation(self):
         """Push a single item with priority 0 (50% weight)."""
         item = self._generate_test_item(size="small")
-        self.push_item(item=item, priority=0)
+        self.push_item(item=item, priority=1)
 
     @task(50)
     def pop_operation(self):
@@ -78,13 +78,13 @@ class ProducerHeavyUser(BasePushPopUser):
 
         # Push 5 items to start
         for i in range(5):
-            self.push_item(priority=0)
+            self.push_item(priority=1)
 
     @task(80)
     def push_operation(self):
         """Push items (80% weight)."""
         item = self._generate_test_item(size="small")
-        self.push_item(item=item, priority=0)
+        self.push_item(item=item, priority=1)
 
     @task(20)
     def pop_operation(self):
@@ -112,13 +112,13 @@ class ConsumerHeavyUser(BasePushPopUser):
 
         # Push 50 items to start with to handle initial consumption
         for i in range(50):
-            self.push_item(priority=0)
+            self.push_item(priority=1)
 
     @task(20)
     def push_operation(self):
         """Push items less frequently (20% weight)."""
         item = self._generate_test_item(size="small")
-        self.push_item(item=item, priority=0)
+        self.push_item(item=item, priority=1)
 
     @task(80)
     def pop_operation(self):
@@ -186,19 +186,19 @@ class BalancedLargeItemsUser(BasePushPopUser):
 
         for i in range(10):
             item = self._generate_test_item(size="medium")
-            self.push_item(item=item, priority=0)
+            self.push_item(item=item, priority=1)
 
     @task(50)
     def push_medium_item(self):
         """Push medium-sized items (~1KB)."""
         item = self._generate_test_item(size="medium")
-        self.push_item(item=item, priority=0)
+        self.push_item(item=item, priority=1)
 
     @task(40)
     def push_large_item(self):
         """Push large items (~10KB) occasionally."""
         item = self._generate_test_item(size="large")
-        self.push_item(item=item, priority=0)
+        self.push_item(item=item, priority=1)
 
     @task(50)
     def pop_items_batch(self):
