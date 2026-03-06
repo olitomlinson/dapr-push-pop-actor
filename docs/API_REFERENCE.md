@@ -458,7 +458,7 @@ Pop a single item from the specified queue, with optional acknowledgement.
 **Path Parameters:**
 - `queueId` (string): Unique identifier for the queue
 
-**Query Parameters:**
+**Headers:**
 - `require_ack` (boolean, optional): Require acknowledgement for popped items. Default: false.
 - `ttl_seconds` (integer, optional): Lock TTL in seconds if `require_ack=true`. Default: 30. Range: 1-300.
 
@@ -504,18 +504,23 @@ None
 
 ```bash
 # Pop single item (no acknowledgement)
-curl -X POST "http://localhost:8000/queue/my-queue/pop"
+curl -X POST "http://localhost:8000/queue/my-queue/pop" \
+  -H "require_ack: false"
 # Response: {"item": {"task_id": 123, "action": "send_email"}}
 
 # Pop with acknowledgement
-curl -X POST "http://localhost:8000/queue/my-queue/pop?require_ack=true"
+curl -X POST "http://localhost:8000/queue/my-queue/pop" \
+  -H "require_ack: true"
 # Response: {"items": [...], "lock_id": "abc123", "locked": true, ...}
 
 # Pop with custom TTL (2 minutes)
-curl -X POST "http://localhost:8000/queue/my-queue/pop?require_ack=true&ttl_seconds=120"
+curl -X POST "http://localhost:8000/queue/my-queue/pop" \
+  -H "require_ack: true" \
+  -H "ttl_seconds: 120"
 
 # Pop from empty queue (returns null)
-curl -X POST "http://localhost:8000/queue/empty-queue/pop"
+curl -X POST "http://localhost:8000/queue/empty-queue/pop" \
+  -H "require_ack: false"
 # Response: {"item": null}
 ```
 
@@ -601,7 +606,8 @@ curl -X POST "http://localhost:8000/queue/my-queue/acknowledge" \
 
 ```bash
 # 1. Pop with acknowledgement
-RESPONSE=$(curl -s -X POST "http://localhost:8000/queue/my-queue/pop?require_ack=true")
+RESPONSE=$(curl -s -X POST "http://localhost:8000/queue/my-queue/pop" \
+  -H "require_ack: true")
 LOCK_ID=$(echo $RESPONSE | jq -r '.lock_id')
 ITEMS=$(echo $RESPONSE | jq -r '.items')
 

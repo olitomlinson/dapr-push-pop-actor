@@ -76,8 +76,8 @@ public class QueueController : ControllerBase
     [HttpPost("{queueId}/pop")]
     public async Task<IActionResult> Pop(
         string queueId,
-        [FromQuery] bool require_ack = false,
-        [FromQuery] int ttl_seconds = 30)
+        [FromHeader] bool require_ack = false,
+        [FromHeader] int ttl_seconds = 30)
     {
         try
         {

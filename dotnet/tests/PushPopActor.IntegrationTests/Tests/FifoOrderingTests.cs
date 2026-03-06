@@ -33,7 +33,9 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         var actualIds = new List<int>();
         for (int i = 0; i < 10; i++)
         {
-            var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
+            var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+            request.Headers.Add("require_ack", "false");
+            var response = await fixture.ApiClient.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
@@ -68,7 +70,9 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         var actualIds = new List<int>();
         for (int i = 0; i < 100; i++)
         {
-            var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
+            var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+            request.Headers.Add("require_ack", "false");
+            var response = await fixture.ApiClient.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
@@ -92,7 +96,9 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         // Arrange - Don't push anything
 
         // Act - Try to pop from empty queue
-        var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+        request.Headers.Add("require_ack", "false");
+        var response = await fixture.ApiClient.SendAsync(request);
 
         // Assert - Should succeed with null result
         response.EnsureSuccessStatusCode();
@@ -111,11 +117,15 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         pushResponse.EnsureSuccessStatusCode();
 
         // Act - Pop twice
-        var firstPop = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
+        var firstPopRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+        firstPopRequest.Headers.Add("require_ack", "false");
+        var firstPop = await fixture.ApiClient.SendAsync(firstPopRequest);
         firstPop.EnsureSuccessStatusCode();
         var firstResult = await firstPop.Content.ReadFromJsonAsync<ApiPopResponse>();
 
-        var secondPop = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
+        var secondPopRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+        secondPopRequest.Headers.Add("require_ack", "false");
+        var secondPop = await fixture.ApiClient.SendAsync(secondPopRequest);
         secondPop.EnsureSuccessStatusCode();
         var secondResult = await secondPop.Content.ReadFromJsonAsync<ApiPopResponse>();
 
@@ -155,7 +165,9 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         var actualIds = new List<int>();
         for (int i = 0; i < 300; i++)
         {
-            var response = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
+            var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+            request.Headers.Add("require_ack", "false");
+            var response = await fixture.ApiClient.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
@@ -170,7 +182,9 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         Assert.Equal(expectedIds, actualIds);
 
         // Verify queue is now empty
-        var emptyPopResponse = await fixture.ApiClient.PostAsync($"/queue/{fixture.QueueId}/pop?require_ack=false", null);
+        var emptyPopRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+        emptyPopRequest.Headers.Add("require_ack", "false");
+        var emptyPopResponse = await fixture.ApiClient.SendAsync(emptyPopRequest);
         emptyPopResponse.EnsureSuccessStatusCode();
         var emptyResult = await emptyPopResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
         Assert.NotNull(emptyResult);
@@ -226,7 +240,9 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         // Act - Pop 800 items (will load segments 2-8 from external storage, queue them for deletion)
         for (int i = 0; i < 800; i++)
         {
-            var response = await fixture.ApiClient.PostAsync($"/queue/{queueId}/pop?require_ack=false", null);
+            var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{queueId}/pop");
+            request.Headers.Add("require_ack", "false");
+            var response = await fixture.ApiClient.SendAsync(request);
             response.EnsureSuccessStatusCode();
         }
 
