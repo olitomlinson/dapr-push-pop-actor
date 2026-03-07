@@ -27,10 +27,7 @@ public class FifoOrderingTests(DaprTestFixture fixture)
             expectedIds.Add(i);
         }
 
-        // Give actors a moment to initialize and process
-        await Task.Delay(TimeSpan.FromSeconds(5));
-
-        // Act - Pop all 10 items
+        // Act - Pop all 10 items (actors initialize synchronously on first operation)
         var actualIds = new List<int>();
         for (int i = 0; i < 10; i++)
         {
@@ -155,9 +152,6 @@ public class FifoOrderingTests(DaprTestFixture fixture)
             expectedIds.Add(i);
         }
 
-        // Give actors time to process and offload segments
-        await Task.Delay(TimeSpan.FromSeconds(5));
-
         // Act - Pop all 300 items (will trigger segment loading from external store)
         var actualIds = new List<int>();
         for (int i = 0; i < 300; i++)
@@ -211,9 +205,6 @@ public class FifoOrderingTests(DaprTestFixture fixture)
             response.EnsureSuccessStatusCode();
         }
 
-        // Wait for offloading to complete
-        await Task.Delay(TimeSpan.FromSeconds(10));
-
         // At this point, segments 2-8 should be offloaded to external state store
         // With BufferSegments=1, headSegment=0, tailSegment=9:
         //   minOffload = 0 + 1 + 1 = 2
@@ -254,11 +245,13 @@ public class FifoOrderingTests(DaprTestFixture fixture)
         Assert.NotNull(deletionMetadata);
         // Note: We can't easily deserialize the dynamic type structure, but we verified it exists
 
-        // Poll for segment deletion (cleanup timer fires every 60 seconds)
-        // With SEGMENT_DELETION_RETENTION_SECONDS=0, segments should be deleted on first run
-        // Poll every 5 seconds with 70 second timeout
-        var timeout = TimeSpan.FromSeconds(70);
-        var pollInterval = TimeSpan.FromSeconds(5);
+        // Poll for segment deletion (cleanup timer fires based on SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS)
+        // With SEGMENT_DELETION_RETENTION_SECONDS=0 and SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS=2,
+        // segments should be deleted within a few timer cycles
+        // With actor activation timing + pop duration, we need sufficient buffer for next cleanup cycle
+        // Poll every 2 seconds with 20 second timeout
+        var timeout = TimeSpan.FromSeconds(20);
+        var pollInterval = TimeSpan.FromSeconds(2);
         var startTime = DateTime.UtcNow;
 
         string? segment2After = null;

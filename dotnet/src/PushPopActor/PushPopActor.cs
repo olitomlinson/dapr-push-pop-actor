@@ -117,6 +117,20 @@ public class PushPopActor : Actor, IPushPopActor
     }
 
     /// <summary>
+    /// Get the cleanup scan interval in seconds from environment variable or default.
+    /// Environment variable: SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS
+    /// </summary>
+    private static int GetCleanupScanIntervalSeconds()
+    {
+        var envVar = Environment.GetEnvironmentVariable("SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS");
+        if (int.TryParse(envVar, out var seconds) && seconds >= 1)
+        {
+            return seconds;
+        }
+        return OffloadSegmentCleanupScanIntervalSeconds;
+    }
+
+    /// <summary>
     /// Get current Unix timestamp in seconds.
     /// </summary>
     private static double GetUnixTimestampSeconds()
@@ -156,14 +170,15 @@ public class PushPopActor : Actor, IPushPopActor
         }
 
         // Register cleanup timer (not durable, must re-register on each activation)
+        var scanInterval = GetCleanupScanIntervalSeconds();
         await RegisterTimerAsync(
             OffloadSegmentCleanupTimerName,
             nameof(OffloadSegmentCleanupAsync),
             null,
-            TimeSpan.FromSeconds(OffloadSegmentCleanupScanIntervalSeconds),  // Due time (first run)
-            TimeSpan.FromSeconds(OffloadSegmentCleanupScanIntervalSeconds)); // Period (recurring)
+            TimeSpan.FromSeconds(scanInterval),  // Due time (first run)
+            TimeSpan.FromSeconds(scanInterval)); // Period (recurring)
 
-        Logger.LogDebug($"Actor {Id.GetId()}: Registered cleanup timer ({OffloadSegmentCleanupScanIntervalSeconds}s interval)");
+        Logger.LogDebug("Actor {ActorId}: Registered cleanup timer ({ScanInterval}s interval)", Id.GetId(), scanInterval);
     }
 
     /// <summary>

@@ -83,6 +83,8 @@ public class DaprTestEnvironment : IAsyncLifetime
             .WithEnvironment("DAPR_GRPC_ENDPOINT", "http://dapr-sidecar:50001")
             // Configure soft-delete retention for fast testing (0 seconds = immediate deletion)
             .WithEnvironment("SEGMENT_DELETION_RETENTION_SECONDS", "0")
+            // Configure cleanup scan interval for fast testing (2 seconds instead of default 60)
+            .WithEnvironment("SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS", "2")
             // Configure logging for integration tests
             .WithEnvironment("Logging__LogLevel__Default", "Warning")
             .WithEnvironment("Logging__LogLevel__PushPopActor", "Debug")
