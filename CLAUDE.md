@@ -102,6 +102,71 @@ dapr run --app-id push-pop-api \
 docker-compose up                          # Full stack
 ```
 
+## Testing & Development Workflow
+
+**CRITICAL: Follow Test-First Development (TDD) Approach**
+
+1. **Write tests BEFORE implementation code** - Always write failing tests first
+2. **Run fast feedback tests after EVERY code change** - No exceptions
+3. **Use integration tests for final verification** - Before committing
+
+### Fast Feedback Loop (< 5 seconds)
+
+Run unit tests after every code change - NO Docker required:
+
+```bash
+cd dotnet
+dotnet test tests/PushPopActor.Tests/PushPopActor.Tests.csproj
+```
+
+### Full Verification (requires Docker)
+
+Run integration tests before committing:
+
+```bash
+./build-and-test.sh
+```
+
+### Test Organization
+
+- **Actor unit tests** (21 tests in `PushPopActorTests.cs`): Business logic in `PushPopActor.cs`
+- **Controller unit tests** (10 tests in `QueueControllerTests.cs`): HTTP status codes, request validation
+- **Integration tests** (12 tests in `PushPopActor.IntegrationTests`): Full stack end-to-end with Dapr + PostgreSQL
+
+### When to Run Tests
+
+- **After every code change**: Run fast unit tests (`dotnet test`)
+- **Before committing**: Run full integration tests (`./build-and-test.sh`)
+- **After refactoring**: Run both unit and integration tests
+- **When fixing bugs**: Write failing test FIRST, then fix code
+
+### TDD Workflow
+
+1. Write failing test that describes desired behavior
+2. Run test to confirm it fails (red) ❌
+3. Write minimal code to make test pass (green) ✅
+4. Refactor while keeping tests green
+5. Run fast tests after each change
+6. Commit only when all tests pass
+
+### Controller Testing Architecture
+
+The API server uses `IActorInvoker` abstraction for testability:
+
+```csharp
+// Interface enables mocking in unit tests
+public interface IActorInvoker
+{
+    Task<TResponse> InvokeMethodAsync<TResponse>(...);
+    Task<TResponse> InvokeMethodAsync<TRequest, TResponse>(...);
+}
+
+// Implementation wraps Dapr's ActorProxy
+public class DaprActorInvoker : IActorInvoker { ... }
+```
+
+This pattern enables controller unit tests to mock actor responses and verify HTTP status code mappings without requiring Dapr runtime.
+
 ## Architecture Notes
 
 ### Actor Model

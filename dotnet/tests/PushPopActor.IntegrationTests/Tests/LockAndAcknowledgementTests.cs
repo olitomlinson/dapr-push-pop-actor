@@ -190,12 +190,8 @@ public class LockAndAcknowledgementTests(DaprTestFixture fixture)
         popRequest.Headers.Add("require_ack", "false");
         var popResponse = await fixture.ApiClient.SendAsync(popRequest);
 
-        // Assert - Should return 200 OK (not 423) with null item
-        Assert.Equal(HttpStatusCode.OK, popResponse.StatusCode);
-
-        var result = await popResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
-        Assert.NotNull(result);
-        Assert.Null(result.Item);
+        // Assert - Should return 204 No Content (not 423) for empty queue
+        Assert.Equal(HttpStatusCode.NoContent, popResponse.StatusCode);
     }
 
     [Fact]

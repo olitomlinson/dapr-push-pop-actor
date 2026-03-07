@@ -19,11 +19,11 @@ public record ApiPushResponse(
 );
 
 public record ApiPopResponse(
-    object? Item
+    object Item
 );
 
 public record ApiPopWithAckResponse(
-    object? Item,
+    object Item,
     bool Locked,
     string? LockId,
     double? LockExpiresAt,

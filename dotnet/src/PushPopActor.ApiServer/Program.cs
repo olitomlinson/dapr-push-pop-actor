@@ -1,12 +1,16 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dapr.Actors.Runtime;
+using PushPopActor.ApiServer.Abstractions;
 using PushPopActor.ApiServer.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container
 builder.Services.AddControllers().AddDapr();
+
+// Register actor invoker abstraction
+builder.Services.AddSingleton<IActorInvoker, DaprActorInvoker>();
 
 // Configure actor settings
 var actorConfig = new ActorConfiguration

@@ -1,8 +1,8 @@
 using System.Text.Json;
 using Dapr.Actors;
-using Dapr.Actors.Client;
 using Microsoft.AspNetCore.Mvc;
 using PushPopActor.Interfaces;
+using PushPopActor.ApiServer.Abstractions;
 using PushPopActor.ApiServer.Constants;
 using PushPopActor.ApiServer.Models;
 using PushPopActor.ApiServer.Configuration;
@@ -15,11 +15,16 @@ public class QueueController : ControllerBase
 {
     private readonly ILogger<QueueController> _logger;
     private readonly ActorConfiguration _actorConfig;
+    private readonly IActorInvoker _actorInvoker;
 
-    public QueueController(ILogger<QueueController> logger, ActorConfiguration actorConfig)
+    public QueueController(
+        ILogger<QueueController> logger,
+        ActorConfiguration actorConfig,
+        IActorInvoker actorInvoker)
     {
         _logger = logger;
         _actorConfig = actorConfig;
+        _actorInvoker = actorInvoker;
     }
 
     /// <summary>
@@ -40,12 +45,13 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Push request for queue {queueId} with priority {request.Priority}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create(actorId, _actorConfig.ActorTypeName);
 
             // Get raw JSON string from JsonElement (no unnecessary deserialization)
             var itemJson = request.Item.GetRawText();
 
-            var result = await proxy.InvokeMethodAsync<PushRequest, PushResponse>(
+            var result = await _actorInvoker.InvokeMethodAsync<PushRequest, PushResponse>(
+                actorId,
+                _actorConfig.ActorTypeName,
                 ActorMethodNames.Push,
                 new PushRequest
                 {
@@ -84,19 +90,20 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Pop request for queue {queueId}, require_ack={require_ack}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create(actorId, _actorConfig.ActorTypeName);
 
             if (require_ack)
             {
-                var result = await proxy.InvokeMethodAsync<PopWithAckRequest, PopWithAckResponse>(
+                var result = await _actorInvoker.InvokeMethodAsync<PopWithAckRequest, PopWithAckResponse>(
+                    actorId,
+                    _actorConfig.ActorTypeName,
                     ActorMethodNames.PopWithAck,
                     new PopWithAckRequest
                     {
                         TtlSeconds = ttl_seconds
                     });
 
-                // If locked by another operation, return 423 Locked
-                if (result.Locked && result.ItemJson == null)
+                // If locked by another operation (Locked=true but no LockId), return 423 Locked
+                if (result.Locked && result.LockId == null)
                 {
                     return StatusCode(423, new ApiLockedResponse(
                         result.Message,
@@ -104,42 +111,49 @@ public class QueueController : ControllerBase
                     ));
                 }
 
-                // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
-                object? item = null;
-                if (result.ItemJson != null)
+                // If queue is empty, return 204 No Content
+                if (result.IsEmpty)
                 {
-                    item = JsonDocument.Parse(result.ItemJson).RootElement;
+                    return NoContent();
                 }
 
+
                 return Ok(new ApiPopWithAckResponse(
-                    item,
-                    result.Locked,
-                    result.LockId,
-                    result.LockExpiresAt,
-                    result.Message
-                ));
+                JsonDocument.Parse(result.ItemJson).RootElement,
+                result.Locked,
+                result.LockId,
+                result.LockExpiresAt,
+                result.Message));
+
             }
             else
             {
-                var result = await proxy.InvokeMethodAsync<PopResponse>(ActorMethodNames.Pop);
+                var result = await _actorInvoker.InvokeMethodAsync<PopResponse>(
+                    actorId,
+                    _actorConfig.ActorTypeName,
+                    ActorMethodNames.Pop);
+
+                // DEBUG: Log what we actually received
+                _logger.LogWarning($"[DEBUG] Pop result - ItemJson: '{result.ItemJson ?? "NULL"}', Locked: {result.Locked}, IsEmpty: {result.IsEmpty}, Message: '{result.Message ?? "NULL"}'");
 
                 // If locked by another operation, return 423 Locked
-                if (result.Locked && result.ItemJson == null)
+                if (result.Locked)
                 {
+                    _logger.LogWarning("[DEBUG] Returning 423 Locked");
                     return StatusCode(423, new ApiLockedResponse(
                         result.Message,
                         result.LockExpiresAt
                     ));
                 }
 
-                // Parse JSON string to JsonElement for API response (no unnecessary deserialization)
-                object? item = null;
-                if (result.ItemJson != null)
+                // If queue is empty, return 204 No Content
+                // Check both IsEmpty flag and null ItemJson for backwards compatibility
+                if (result.IsEmpty)
                 {
-                    item = JsonDocument.Parse(result.ItemJson).RootElement;
+                    return NoContent();
                 }
 
-                return Ok(new ApiPopResponse(item));
+                return Ok(new ApiPopResponse(JsonDocument.Parse(result.ItemJson).RootElement));
             }
         }
         catch (Exception ex)
@@ -162,9 +176,10 @@ public class QueueController : ControllerBase
             _logger.LogDebug($"Acknowledge request for queue {queueId} with lock_id {request.LockId}");
 
             var actorId = new ActorId(queueId);
-            var proxy = ActorProxy.Create(actorId, _actorConfig.ActorTypeName);
 
-            var result = await proxy.InvokeMethodAsync<AcknowledgeRequest, AcknowledgeResponse>(
+            var result = await _actorInvoker.InvokeMethodAsync<AcknowledgeRequest, AcknowledgeResponse>(
+                actorId,
+                _actorConfig.ActorTypeName,
                 ActorMethodNames.Acknowledge,
                 new AcknowledgeRequest
                 {

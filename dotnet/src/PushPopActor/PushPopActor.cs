@@ -330,6 +330,7 @@ public class PushPopActor : Actor, IPushPopActor
                     {
                         ItemJson = null,
                         Locked = true,
+                        IsEmpty = false,
                         Message = "Queue is locked by another operation",
                         LockExpiresAt = lockData.ExpiresAt
                     }, -1);
@@ -343,7 +344,7 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (metadata.Queues.Count == 0)
             {
-                return (new PopResponse { ItemJson = null, Locked = false }, -1);
+                return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1);
             }
 
             // Find lowest priority with items
@@ -412,7 +413,7 @@ public class PushPopActor : Actor, IPushPopActor
                         Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                         // Return item JSON string directly with priority
-                        return (new PopResponse { ItemJson = itemJson, Locked = false }, priority);
+                        return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority);
                     }
                     else
                     {
@@ -428,7 +429,7 @@ public class PushPopActor : Actor, IPushPopActor
                         Logger.LogDebug($"Popped last item from priority {priority}, queue now empty");
 
                         // Return item JSON string directly with priority
-                        return (new PopResponse { ItemJson = itemJson, Locked = false }, priority);
+                        return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority);
                     }
                 }
                 else
@@ -448,11 +449,11 @@ public class PushPopActor : Actor, IPushPopActor
                     Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                     // Return item JSON string directly with priority
-                    return (new PopResponse { ItemJson = itemJson, Locked = false }, priority);
+                    return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority);
                 }
             }
 
-            return (new PopResponse { ItemJson = null, Locked = false }, -1);
+            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1);
         }
         catch (InvalidOperationException)
         {
@@ -462,7 +463,7 @@ public class PushPopActor : Actor, IPushPopActor
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in PopAsync");
-            return (new PopResponse { ItemJson = null, Locked = false }, -1);
+            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1);
         }
     }
 
@@ -514,6 +515,7 @@ public class PushPopActor : Actor, IPushPopActor
                     {
                         ItemJson = null,
                         Locked = true,
+                        IsEmpty = false,
                         Message = "Queue is locked by another operation",
                         LockExpiresAt = lockData.ExpiresAt
                     }, -1, -1);
@@ -529,7 +531,7 @@ public class PushPopActor : Actor, IPushPopActor
 
             if (metadata.Queues.Count == 0)
             {
-                return (new PopResponse { ItemJson = null, Locked = false }, -1, -1);
+                return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1, -1);
             }
 
             // Find lowest priority with items
@@ -564,15 +566,15 @@ public class PushPopActor : Actor, IPushPopActor
                 Logger.LogDebug($"Peeked item from priority {priority}, segment {headSegment}");
 
                 // Return item JSON string directly with priority and segment
-                return (new PopResponse { ItemJson = itemJson, Locked = false }, priority, headSegment);
+                return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority, headSegment);
             }
 
-            return (new PopResponse { ItemJson = null, Locked = false }, -1, -1);
+            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1, -1);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in PeekWithPriorityAsync");
-            return (new PopResponse { ItemJson = null, Locked = false }, -1, -1);
+            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1, -1);
         }
     }
 
@@ -607,7 +609,6 @@ public class PushPopActor : Actor, IPushPopActor
                 {
                     return new PopWithAckResponse
                     {
-                        ItemJson = null,
                         Locked = true,
                         LockExpiresAt = existingLock.ExpiresAt,
                         Message = "Queue is locked by another operation"
@@ -627,8 +628,8 @@ public class PushPopActor : Actor, IPushPopActor
             {
                 return new PopWithAckResponse
                 {
-                    ItemJson = null,
                     Locked = false,
+                    IsEmpty = true,
                     Message = "Queue is empty"
                 };
             }
@@ -656,6 +657,7 @@ public class PushPopActor : Actor, IPushPopActor
             {
                 ItemJson = peekResult.ItemJson,
                 Locked = true,
+                IsEmpty = false,
                 LockId = lockId,
                 LockExpiresAt = lockExpiresAt,
                 Message = $"Item locked with ID {lockId}"
@@ -668,6 +670,7 @@ public class PushPopActor : Actor, IPushPopActor
             {
                 ItemJson = null,
                 Locked = false,
+                IsEmpty = true,
                 Message = $"Error: {ex.Message}"
             };
         }

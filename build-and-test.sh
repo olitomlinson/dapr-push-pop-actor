@@ -13,8 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 # Default configuration
-DOCKER_IMAGE_NAME="pushpopactor-api"
-DOCKER_IMAGE_TAG="${DOCKER_IMAGE_TAG:-latest}"
+DOCKER_IMAGE_NAME="pushpop-api"
+DOCKER_IMAGE_TAG="${DOCKER_IMAGE_TAG:-test}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
 SKIP_PUSH="${SKIP_PUSH:-true}"
 SKIP_TESTS="${SKIP_TESTS:-false}"
@@ -32,7 +32,7 @@ Build Docker image and run integration tests for PushPopActor
 
 OPTIONS:
     -h, --help              Show this help message
-    -t, --tag TAG           Docker image tag (default: latest)
+    -t, --tag TAG           Docker image tag (default: test)
     -r, --registry REGISTRY Docker registry URL (e.g., ghcr.io/username)
     -p, --push              Push Docker image to registry
     -q, --queue-id ID       Queue ID for tests (default: random UUID)

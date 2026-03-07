@@ -54,6 +54,11 @@ public record PopResponse
     public bool Locked { get; init; }
 
     /// <summary>
+    /// Whether the queue is empty.
+    /// </summary>
+    public bool IsEmpty { get; init; }
+
+    /// <summary>
     /// Status message.
     /// </summary>
     public string? Message { get; init; }
@@ -78,6 +83,11 @@ public record PopWithAckResponse
     /// Whether the queue is locked.
     /// </summary>
     public bool Locked { get; init; }
+
+    /// <summary>
+    /// Whether the queue is empty.
+    /// </summary>
+    public bool IsEmpty { get; init; }
 
     /// <summary>
     /// Lock ID for acknowledgement (if locked).
