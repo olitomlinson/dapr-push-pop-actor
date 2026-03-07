@@ -69,14 +69,17 @@ Task<ExtendLockResponse> ExtendLock(ExtendLockRequest);    // Extend existing lo
 - **[dotnet/src/PushPopActor/PushPopActor.cs](dotnet/src/PushPopActor/PushPopActor.cs)**: Core `PushPopActor` implementation
 - **[dotnet/src/PushPopActor.Interfaces/IPushPopActor.cs](dotnet/src/PushPopActor.Interfaces/IPushPopActor.cs)**: Actor interface definition
 - **[dotnet/src/PushPopActor.Interfaces/Models.cs](dotnet/src/PushPopActor.Interfaces/Models.cs)**: Request/Response models
-- **[dotnet/src/PushPopActor.ApiServer/Program.cs](dotnet/src/PushPopActor.ApiServer/Program.cs)**: ASP.NET Core API server
+- **[dotnet/src/PushPopActor.ApiServer/Program.cs](dotnet/src/PushPopActor.ApiServer/Program.cs)**: ASP.NET Core API server (HTTP + gRPC)
 - **[dotnet/src/PushPopActor.ApiServer/Controllers/QueueController.cs](dotnet/src/PushPopActor.ApiServer/Controllers/QueueController.cs)**: REST API endpoints
-- **[dotnet/tests/PushPopActor.Tests/PushPopActorTests.cs](dotnet/tests/PushPopActor.Tests/PushPopActorTests.cs)**: Comprehensive unit tests
+- **[dotnet/src/PushPopActor.ApiServer/Services/PushPopQueueGrpcService.cs](dotnet/src/PushPopActor.ApiServer/Services/PushPopQueueGrpcService.cs)**: gRPC service implementation
+- **[dotnet/src/PushPopActor.ApiServer/Protos/pushpop.proto](dotnet/src/PushPopActor.ApiServer/Protos/pushpop.proto)**: gRPC service definition
+- **[dotnet/tests/PushPopActor.Tests/PushPopActorTests.cs](dotnet/tests/PushPopActor.Tests/PushPopActorTests.cs)**: Actor unit tests
 
 ## Technology Stack
 
 - **Dapr SDK**: `Dapr.Actors`, `Dapr.AspNetCore`, `Dapr.Client`
-- **Web Framework**: ASP.NET Core 10.0 (for API mode)
+- **Web Framework**: ASP.NET Core 10.0 (HTTP REST + gRPC)
+- **gRPC**: `Grpc.AspNetCore` 2.70.0, Protocol Buffers
 - **Testing**: xUnit, Moq
 - **Language**: C# 13 with .NET 10.0
 
@@ -131,8 +134,9 @@ Run integration tests before committing:
 ### Test Organization
 
 - **Actor unit tests** (28 tests in `PushPopActorTests.cs`): Business logic in `PushPopActor.cs`
-- **Controller unit tests** (14 tests in `QueueControllerTests.cs`): HTTP status codes, request validation
-- **Integration tests** (15 tests in `PushPopActor.IntegrationTests`): Full stack end-to-end with Dapr + PostgreSQL
+- **HTTP controller unit tests** (14 tests in `QueueControllerTests.cs`): HTTP status codes, request validation
+- **gRPC service unit tests** (8 tests in `PushPopQueueGrpcServiceTests.cs`): gRPC status code mappings, error handling
+- **Integration tests** (28 tests in `PushPopActor.IntegrationTests`): Full stack end-to-end with Dapr + PostgreSQL (HTTP + gRPC)
 
 ### When to Run Tests
 
@@ -249,6 +253,181 @@ This pattern enables controller unit tests to mock actor responses and verify HT
 - `POST /queue/{queueId}/acknowledge` - Acknowledge and remove locked item
 - `POST /queue/{queueId}/extend-lock` - Extend existing lock TTL
 - `GET /health` - Health check
+
+### gRPC API
+
+The API server exposes equivalent gRPC endpoints alongside HTTP REST APIs on the same port (5000). Both protocols share the same actor invocation logic via `IActorInvoker` abstraction.
+
+**Proto File**: [dotnet/src/PushPopActor.ApiServer/Protos/pushpop.proto](dotnet/src/PushPopActor.ApiServer/Protos/pushpop.proto)
+
+**Service Definition**:
+```protobuf
+service PushPopQueue {
+  rpc Push(PushRequest) returns (PushResponse);
+  rpc Pop(PopRequest) returns (PopResponse);
+  rpc PopWithAck(PopWithAckRequest) returns (PopWithAckResponse);
+  rpc Acknowledge(AcknowledgeRequest) returns (AcknowledgeResponse);
+  rpc ExtendLock(ExtendLockRequest) returns (ExtendLockResponse);
+}
+```
+
+**Key Features**:
+- **HTTP/2 Binary Protocol**: Lower latency than JSON over HTTP/1.1
+- **Type Safety**: Protocol Buffers provide strongly-typed contracts
+- **Cross-Language**: Proto files enable client generation in any language
+- **Same Port**: HTTP and gRPC run on port 5000 (ASP.NET Core auto-negotiates)
+
+**gRPC Status Code Mappings**:
+```
+HTTP 200 → gRPC OK (0)
+HTTP 204 → gRPC OK with empty result
+HTTP 400 → gRPC INVALID_ARGUMENT (3)
+HTTP 404 → gRPC NOT_FOUND (5)
+HTTP 410 → gRPC FAILED_PRECONDITION (9) - lock expired
+HTTP 423 → gRPC UNAVAILABLE (14) - resource locked
+HTTP 500 → gRPC INTERNAL (13)
+```
+
+**Testing with grpcurl**:
+```bash
+# List services
+grpcurl -plaintext localhost:5000 list
+
+# Push item
+grpcurl -plaintext -d '{"queue_id":"test","item_json":"{\"msg\":\"hello\"}","priority":1}' \
+  localhost:5000 pushpop.PushPopQueue/Push
+
+# Pop item
+grpcurl -plaintext -d '{"queue_id":"test"}' \
+  localhost:5000 pushpop.PushPopQueue/Pop
+
+# Pop with acknowledgement
+grpcurl -plaintext -d '{"queue_id":"test","ttl_seconds":30}' \
+  localhost:5000 pushpop.PushPopQueue/PopWithAck
+```
+
+**C# Client Example**:
+```csharp
+using Grpc.Net.Client;
+using PushPopActor.ApiServer.Grpc;
+
+var channel = GrpcChannel.ForAddress("http://localhost:5000");
+var client = new PushPopQueue.PushPopQueueClient(channel);
+
+// Push
+var pushResponse = await client.PushAsync(new PushRequest
+{
+    QueueId = "my-queue",
+    ItemJson = "{\"id\":1,\"name\":\"test\"}",
+    Priority = 1
+});
+
+// Pop with acknowledgement
+var popResponse = await client.PopWithAckAsync(new PopWithAckRequest
+{
+    QueueId = "my-queue",
+    TtlSeconds = 30
+});
+
+if (popResponse.ResultCase == PopWithAckResponse.ResultOneofCase.Success)
+{
+    var lockId = popResponse.Success.LockId;
+    // Process item...
+
+    // Acknowledge
+    await client.AcknowledgeAsync(new AcknowledgeRequest
+    {
+        QueueId = "my-queue",
+        LockId = lockId
+    });
+}
+```
+
+**gRPC Reflection (Service Discovery)**:
+
+The server enables gRPC Server Reflection, which allows clients to discover services and methods at runtime without needing the `.proto` file.
+
+```bash
+# Discover available services (use gRPC port 5001 for local dev, or 810x for docker)
+grpcurl -plaintext localhost:5001 list
+
+# Output:
+# grpc.reflection.v1.ServerReflection
+# pushpop.PushPopQueue
+
+# Describe a service
+grpcurl -plaintext localhost:5001 describe pushpop.PushPopQueue
+
+# Describe a specific method
+grpcurl -plaintext localhost:5001 describe pushpop.PushPopQueue.Push
+
+# Describe a message type
+grpcurl -plaintext localhost:5001 describe pushpop.PushRequest
+
+# Via Docker (gateway instance):
+grpcurl -plaintext localhost:8102 list
+```
+
+**Proto File Access**:
+
+While reflection is available, clients can also access the proto definition directly:
+- **Source**: [dotnet/src/PushPopActor.ApiServer/Protos/pushpop.proto](dotnet/src/PushPopActor.ApiServer/Protos/pushpop.proto)
+- **Package**: `pushpop`
+- **C# Namespace**: `PushPopActor.ApiServer.Grpc`
+
+For client generation in other languages:
+```bash
+# Generate Python client
+python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. pushpop.proto
+
+# Generate Go client
+protoc --go_out=. --go-grpc_out=. pushpop.proto
+
+# Generate Java client
+protoc --java_out=. --grpc-java_out=. pushpop.proto
+```
+
+**HTTP/2 Configuration**:
+
+The server uses **separate ports** for HTTP/1.1 (REST) and HTTP/2 (gRPC) to avoid TLS negotiation requirements:
+
+```csharp
+// In Program.cs
+builder.WebHost.UseKestrel(options =>
+{
+    // HTTP/1.1 endpoint for REST APIs
+    options.ListenAnyIP(httpPort, listenOptions =>
+    {
+        listenOptions.Protocols = HttpProtocols.Http1;
+    });
+
+    // HTTP/2 endpoint for gRPC (no TLS required when HTTP/2 only)
+    options.ListenAnyIP(grpcPort, listenOptions =>
+    {
+        listenOptions.Protocols = HttpProtocols.Http2;
+    });
+});
+```
+
+**Port Assignment**:
+- **Local development**: REST on 5000, gRPC on 5001
+- **Docker (via docker-compose.yml)**:
+  - Host 1: REST on 8000, gRPC on 8100
+  - Host 2: REST on 8001, gRPC on 8101
+  - Gateway: REST on 8002, gRPC on 8102
+  - Host 3: REST on 8003, gRPC on 8103
+
+This dual-port configuration is **required** because Kestrel cannot negotiate HTTP/2 without TLS when supporting both protocols on the same port.
+
+**ARM64 (Apple Silicon) Support**:
+
+To support native ARM64 Docker builds without emulation, the project uses **grpc-tools 2.68.1** instead of the newer 2.70.x versions:
+
+- ✅ Native ARM64 Docker builds (no x86_64 emulation needed)
+- ✅ Better performance on Apple Silicon
+- ✅ Avoids grpc-tools 2.70.0 protoc crash (exit code 139 on linux_arm64)
+
+The proto files are automatically generated during build from [pushpop.proto](dotnet/src/PushPopActor.ApiServer/Protos/pushpop.proto).
 
 ## Development Conventions
 

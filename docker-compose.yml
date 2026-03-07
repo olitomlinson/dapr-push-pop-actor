@@ -74,7 +74,8 @@ services:
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
       - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
-      - "8000:8080"
+      - "8000:8080"  # REST HTTP/1.1
+      - "8100:8081"  # gRPC HTTP/2
     depends_on:
       dotnet-api-server-dapr:
         condition: service_started
@@ -94,7 +95,8 @@ services:
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
       - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
-      - "8001:8080"
+      - "8001:8080"  # REST HTTP/1.1
+      - "8101:8081"  # gRPC HTTP/2
     depends_on:
       dotnet-api-server-dapr-2:
         condition: service_started
@@ -114,7 +116,8 @@ services:
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
       - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
-      - "8002:8080"
+      - "8002:8080"  # REST HTTP/1.1
+      - "8102:8081"  # gRPC HTTP/2
     depends_on:
       dotnet-api-server-dapr-3:
         condition: service_started
@@ -134,7 +137,8 @@ services:
       - ACTOR_TYPE_NAME=${ACTOR_TYPE_NAME}
       - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
-      - "8003:8080"
+      - "8003:8080"  # REST HTTP/1.1
+      - "8103:8081"  # gRPC HTTP/2
     depends_on:
       dotnet-api-server-dapr-4:
         condition: service_started

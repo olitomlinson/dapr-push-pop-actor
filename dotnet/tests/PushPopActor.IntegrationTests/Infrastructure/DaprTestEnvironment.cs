@@ -26,6 +26,7 @@ public class DaprTestEnvironment : IAsyncLifetime
     public string DaprHttpEndpoint { get; private set; } = string.Empty;
     public string DaprGrpcEndpoint { get; private set; } = string.Empty;
     public string ApiServerUrl { get; private set; } = string.Empty;
+    public string ApiServerGrpcUrl { get; private set; } = string.Empty;
 
     // HTTP clients for testing
     public HttpClient ApiClient { get; private set; } = null!;
@@ -75,7 +76,8 @@ public class DaprTestEnvironment : IAsyncLifetime
             .WithImage("pushpop-api:test")
             .WithNetwork(_network)
             .WithNetworkAliases("api-server")
-            .WithPortBinding(5000, true)
+            .WithPortBinding(5000, true) // HTTP/1.1 REST endpoint
+            .WithPortBinding(5001, true) // HTTP/2 gRPC endpoint
             .WithEnvironment("ASPNETCORE_URLS", "http://+:5000")
             .WithEnvironment("REGISTER_ACTORS", "true")
             // Tell the API server where to find Dapr sidecar on the Docker network using FULL endpoint URLs
@@ -104,7 +106,9 @@ public class DaprTestEnvironment : IAsyncLifetime
         await _apiServerContainer.StartAsync();
 
         var apiPort = _apiServerContainer.GetMappedPublicPort(5000);
+        var grpcPort = _apiServerContainer.GetMappedPublicPort(5001);
         ApiServerUrl = $"http://localhost:{apiPort}";
+        ApiServerGrpcUrl = $"http://localhost:{grpcPort}";
 
         // Give API server a moment to start listening
         await Task.Delay(TimeSpan.FromSeconds(2));

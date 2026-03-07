@@ -14,6 +14,11 @@ public class DaprTestFixture : IAsyncLifetime
     public DaprActorHttpClient ActorClient { get; private set; } = null!;
 
     /// <summary>
+    /// gRPC endpoint URL (separate port for HTTP/2)
+    /// </summary>
+    public string GrpcUrl => Environment.ApiServerGrpcUrl;
+
+    /// <summary>
     /// Queue ID for tests - read from environment variable or generated as random GUID
     /// </summary>
     public string QueueId { get; private set; }
