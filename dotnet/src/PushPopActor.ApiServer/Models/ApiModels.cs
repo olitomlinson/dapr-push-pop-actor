@@ -12,6 +12,11 @@ public record ApiAcknowledgeRequest(
     string LockId
 );
 
+public record ApiExtendLockRequest(
+    string LockId,
+    int AdditionalTtlSeconds = 30
+);
+
 // Response models
 public record ApiPushResponse(
     bool Success,
@@ -45,4 +50,9 @@ public record ApiErrorResponse(
 public record ApiLockedResponse(
     string? Message,
     double? LockExpiresAt
+);
+
+public record ApiExtendLockResponse(
+    long NewExpiresAt,
+    string LockId
 );

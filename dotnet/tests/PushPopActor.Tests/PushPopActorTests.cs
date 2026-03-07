@@ -628,4 +628,196 @@ public class PushPopActorTests
         Assert.Contains("Queue corrupted", popEx.Message);
         Assert.Contains("Test corruption error", popEx.Message);
     }
+
+    [Fact]
+    public async Task ExtendLock_ValidLock_ExtendsExpiry()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Push an item
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+
+        // PopWithAck to create lock with 10s TTL
+        var popWithAckResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 10 });
+        Assert.NotNull(popWithAckResult.LockId);
+        var originalExpiresAt = popWithAckResult.LockExpiresAt!.Value;
+
+        // Act - Extend lock by 30 seconds
+        var extendResult = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = popWithAckResult.LockId,
+            AdditionalTtlSeconds = 30
+        });
+
+        // Assert
+        Assert.True(extendResult.Success);
+        Assert.True(extendResult.NewExpiresAt > originalExpiresAt);
+        // New expiry should be approximately 30 seconds later (within 2 seconds tolerance)
+        Assert.True(Math.Abs(extendResult.NewExpiresAt - (originalExpiresAt + 30)) < 2);
+    }
+
+    [Fact]
+    public async Task ExtendLock_InvalidLockId_ReturnsError()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Push an item and create lock
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+        var popWithAckResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 10 });
+        Assert.NotNull(popWithAckResult.LockId);
+
+        // Act - Try to extend with wrong lock ID
+        var extendResult = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = "wrong-lock-id",
+            AdditionalTtlSeconds = 30
+        });
+
+        // Assert
+        Assert.False(extendResult.Success);
+        Assert.Equal("INVALID_LOCK_ID", extendResult.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ExtendLock_ExpiredLock_ReturnsLockExpired()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Push an item and create lock with 1s TTL
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+        var popWithAckResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 1 });
+        Assert.NotNull(popWithAckResult.LockId);
+
+        // Wait for lock to expire
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Act - Try to extend expired lock
+        var extendResult = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = popWithAckResult.LockId,
+            AdditionalTtlSeconds = 30
+        });
+
+        // Assert
+        Assert.False(extendResult.Success);
+        Assert.Equal("LOCK_EXPIRED", extendResult.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ExtendLock_NoActiveLock_ReturnsLockNotFound()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Act - Try to extend lock when no lock exists
+        var extendResult = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = "nonexistent-lock",
+            AdditionalTtlSeconds = 30
+        });
+
+        // Assert
+        Assert.False(extendResult.Success);
+        Assert.Equal("LOCK_NOT_FOUND", extendResult.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ExtendLock_NegativeTtl_ReturnsInvalidTtl()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Push an item and create lock
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+        var popWithAckResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 10 });
+        Assert.NotNull(popWithAckResult.LockId);
+
+        // Act - Try to extend with negative TTL
+        var extendResult = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = popWithAckResult.LockId,
+            AdditionalTtlSeconds = -1
+        });
+
+        // Assert
+        Assert.False(extendResult.Success);
+        Assert.Equal("INVALID_TTL", extendResult.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ExtendLock_MultipleExtensions_Accumulates()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Push an item and create lock with 10s TTL
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+        var popWithAckResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 10 });
+        Assert.NotNull(popWithAckResult.LockId);
+        var originalExpiresAt = popWithAckResult.LockExpiresAt!.Value;
+
+        // Act - Extend lock twice
+        var extendResult1 = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = popWithAckResult.LockId,
+            AdditionalTtlSeconds = 10
+        });
+        Assert.True(extendResult1.Success);
+
+        var extendResult2 = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = popWithAckResult.LockId,
+            AdditionalTtlSeconds = 10
+        });
+        Assert.True(extendResult2.Success);
+
+        // Assert - Total extension should be 20 seconds (within tolerance)
+        Assert.True(Math.Abs(extendResult2.NewExpiresAt - (originalExpiresAt + 20)) < 2);
+    }
+
+    [Fact]
+    public async Task ExtendLock_KeepsItemLocked_UntilAcknowledge()
+    {
+        // Arrange
+        var mockStateManager = CreateMockStateManager();
+        var actor = await CreateActorAsync(mockStateManager);
+
+        // Push an item and create lock
+        await actor.Push(new Interfaces.PushRequest { ItemJson = "{\"id\":1}", Priority = 1 });
+        var popWithAckResult = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 10 });
+        Assert.NotNull(popWithAckResult.LockId);
+
+        // Extend lock
+        var extendResult = await actor.ExtendLock(new Interfaces.ExtendLockRequest
+        {
+            LockId = popWithAckResult.LockId,
+            AdditionalTtlSeconds = 30
+        });
+        Assert.True(extendResult.Success);
+
+        // Act - Try to Pop (should be blocked)
+        var popResult = await actor.Pop();
+
+        // Assert - Queue should still be locked
+        Assert.True(popResult.Locked);
+        Assert.Null(popResult.ItemJson);
+
+        // Now acknowledge
+        var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = popWithAckResult.LockId });
+        Assert.True(ackResult.Success);
+
+        // Pop should now work (queue empty)
+        var popResult2 = await actor.Pop();
+        Assert.False(popResult2.Locked);
+        Assert.True(popResult2.IsEmpty);
+    }
 }

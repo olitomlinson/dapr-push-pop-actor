@@ -871,6 +871,107 @@ public class PushPopActor : Actor, IPushPopActor
         }
     }
 
+    public async Task<ExtendLockResponse> ExtendLock(ExtendLockRequest request)
+    {
+        try
+        {
+            // Validate lock_id
+            if (string.IsNullOrEmpty(request.LockId))
+            {
+                return new ExtendLockResponse
+                {
+                    Success = false,
+                    NewExpiresAt = 0,
+                    ErrorCode = "INVALID_LOCK_ID",
+                    ErrorMessage = "lock_id cannot be empty"
+                };
+            }
+
+            // Validate additional_ttl_seconds
+            if (request.AdditionalTtlSeconds <= 0)
+            {
+                return new ExtendLockResponse
+                {
+                    Success = false,
+                    NewExpiresAt = 0,
+                    ErrorCode = "INVALID_TTL",
+                    ErrorMessage = "additional_ttl_seconds must be positive"
+                };
+            }
+
+            string lockId = request.LockId;
+
+            // Get lock state
+            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
+            if (!lockState.HasValue)
+            {
+                return new ExtendLockResponse
+                {
+                    Success = false,
+                    NewExpiresAt = 0,
+                    ErrorCode = "LOCK_NOT_FOUND",
+                    ErrorMessage = "Lock not found"
+                };
+            }
+
+            var lockData = lockState.Value;
+
+            // Validate lock ID matches
+            if (lockData.LockId != lockId)
+            {
+                return new ExtendLockResponse
+                {
+                    Success = false,
+                    NewExpiresAt = 0,
+                    ErrorCode = "INVALID_LOCK_ID",
+                    ErrorMessage = "Invalid lock_id"
+                };
+            }
+
+            // Check if lock expired
+            double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            if (now >= lockData.ExpiresAt)
+            {
+                return new ExtendLockResponse
+                {
+                    Success = false,
+                    NewExpiresAt = 0,
+                    ErrorCode = "LOCK_EXPIRED",
+                    ErrorMessage = "Lock has expired"
+                };
+            }
+
+            // Calculate new expiry time (add to current ExpiresAt, not now)
+            double newExpiresAt = lockData.ExpiresAt + request.AdditionalTtlSeconds;
+
+            // Update lock state with new expiry
+            var updatedLock = lockData with { ExpiresAt = newExpiresAt };
+            await StateManager.SetStateAsync("_active_lock", updatedLock);
+            await StateManager.SaveStateAsync();
+
+            Logger.LogDebug($"Extended lock {lockId} by {request.AdditionalTtlSeconds}s, new expiry: {newExpiresAt}");
+
+            return new ExtendLockResponse
+            {
+                Success = true,
+                NewExpiresAt = newExpiresAt,
+                ErrorCode = null,
+                ErrorMessage = null
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error in ExtendLockAsync");
+            return new ExtendLockResponse
+            {
+                Success = false,
+                NewExpiresAt = 0,
+                ErrorCode = "INTERNAL_ERROR",
+                ErrorMessage = $"Error: {ex.Message}"
+            };
+        }
+    }
+
     /// <summary>
     /// Generate a cryptographically secure 11-character alphanumeric lock ID.
     /// </summary>

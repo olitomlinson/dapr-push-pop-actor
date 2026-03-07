@@ -9,4 +9,5 @@ public static class ActorMethodNames
     public const string Pop = "Pop";
     public const string PopWithAck = "PopWithAck";
     public const string Acknowledge = "Acknowledge";
+    public const string ExtendLock = "ExtendLock";
 }

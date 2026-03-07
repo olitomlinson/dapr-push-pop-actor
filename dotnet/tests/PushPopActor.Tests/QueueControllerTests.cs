@@ -375,4 +375,153 @@ public class QueueControllerTests
         // Assert - Should return HTTP 404 Not Found
         Assert.IsType<NotFoundObjectResult>(result);
     }
+
+    /// <summary>
+    /// This test verifies the expected behavior for ExtendLock with valid lock.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Success=true, NewExpiresAt=timestamp
+    /// - Controller should return: HTTP 200 OK
+    /// </summary>
+    [Fact]
+    public async Task ExtendLock_Success_Returns200()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        var newExpiresAt = DateTimeOffset.UtcNow.AddSeconds(60).ToUnixTimeSeconds();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ExtendLockRequest, ExtendLockResponse>(
+                It.IsAny<ActorId>(),
+                It.IsAny<string>(),
+                "ExtendLock",
+                It.IsAny<ExtendLockRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExtendLockResponse
+            {
+                Success = true,
+                NewExpiresAt = newExpiresAt,
+                ErrorCode = null,
+                ErrorMessage = null
+            });
+
+        var controller = new QueueController(_mockLogger.Object, _actorConfig, mockInvoker.Object);
+        var request = new ApiExtendLockRequest("test-lock-123", AdditionalTtlSeconds: 30);
+
+        // Act
+        var result = await controller.ExtendLock("test-queue", request);
+
+        // Assert - Should return HTTP 200 OK
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<ApiExtendLockResponse>(okResult.Value);
+        Assert.Equal("test-lock-123", response.LockId);
+        Assert.Equal((long)newExpiresAt, response.NewExpiresAt);
+    }
+
+    /// <summary>
+    /// This test verifies the expected behavior for ExtendLock with non-existent lock.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Success=false, ErrorCode="LOCK_NOT_FOUND"
+    /// - Controller should return: HTTP 404 Not Found
+    /// </summary>
+    [Fact]
+    public async Task ExtendLock_LockNotFound_Returns404()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ExtendLockRequest, ExtendLockResponse>(
+                It.IsAny<ActorId>(),
+                It.IsAny<string>(),
+                "ExtendLock",
+                It.IsAny<ExtendLockRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExtendLockResponse
+            {
+                Success = false,
+                NewExpiresAt = 0,
+                ErrorCode = "LOCK_NOT_FOUND",
+                ErrorMessage = "Lock not found"
+            });
+
+        var controller = new QueueController(_mockLogger.Object, _actorConfig, mockInvoker.Object);
+        var request = new ApiExtendLockRequest("nonexistent-lock", AdditionalTtlSeconds: 30);
+
+        // Act
+        var result = await controller.ExtendLock("test-queue", request);
+
+        // Assert - Should return HTTP 404 Not Found
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    /// <summary>
+    /// This test verifies the expected behavior for ExtendLock with expired lock.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Success=false, ErrorCode="LOCK_EXPIRED"
+    /// - Controller should return: HTTP 410 Gone
+    /// </summary>
+    [Fact]
+    public async Task ExtendLock_LockExpired_Returns410()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ExtendLockRequest, ExtendLockResponse>(
+                It.IsAny<ActorId>(),
+                It.IsAny<string>(),
+                "ExtendLock",
+                It.IsAny<ExtendLockRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExtendLockResponse
+            {
+                Success = false,
+                NewExpiresAt = 0,
+                ErrorCode = "LOCK_EXPIRED",
+                ErrorMessage = "Lock has expired"
+            });
+
+        var controller = new QueueController(_mockLogger.Object, _actorConfig, mockInvoker.Object);
+        var request = new ApiExtendLockRequest("expired-lock", AdditionalTtlSeconds: 30);
+
+        // Act
+        var result = await controller.ExtendLock("test-queue", request);
+
+        // Assert - Should return HTTP 410 Gone
+        var statusCodeResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(410, statusCodeResult.StatusCode);
+    }
+
+    /// <summary>
+    /// This test verifies the expected behavior for ExtendLock with invalid lock ID.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Success=false, ErrorCode="INVALID_LOCK_ID"
+    /// - Controller should return: HTTP 400 Bad Request
+    /// </summary>
+    [Fact]
+    public async Task ExtendLock_InvalidLockId_Returns400()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ExtendLockRequest, ExtendLockResponse>(
+                It.IsAny<ActorId>(),
+                It.IsAny<string>(),
+                "ExtendLock",
+                It.IsAny<ExtendLockRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExtendLockResponse
+            {
+                Success = false,
+                NewExpiresAt = 0,
+                ErrorCode = "INVALID_LOCK_ID",
+                ErrorMessage = "Invalid lock ID"
+            });
+
+        var controller = new QueueController(_mockLogger.Object, _actorConfig, mockInvoker.Object);
+        var request = new ApiExtendLockRequest("", AdditionalTtlSeconds: 30);
+
+        // Act
+        var result = await controller.ExtendLock("test-queue", request);
+
+        // Assert - Should return HTTP 400 Bad Request
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
 }

@@ -141,3 +141,45 @@ public record AcknowledgeResponse
     /// </summary>
     public string? ErrorCode { get; init; }
 }
+
+/// <summary>
+/// Request model for ExtendLock operation.
+/// </summary>
+public record ExtendLockRequest
+{
+    /// <summary>
+    /// Lock ID to extend.
+    /// </summary>
+    public string LockId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Additional TTL in seconds to add to the lock.
+    /// </summary>
+    public int AdditionalTtlSeconds { get; init; } = 30;
+}
+
+/// <summary>
+/// Response model for ExtendLock operation.
+/// </summary>
+public record ExtendLockResponse
+{
+    /// <summary>
+    /// Whether the lock extension was successful.
+    /// </summary>
+    public bool Success { get; init; }
+
+    /// <summary>
+    /// New expiration timestamp (Unix seconds) after extension.
+    /// </summary>
+    public double NewExpiresAt { get; init; }
+
+    /// <summary>
+    /// Error code (if not successful).
+    /// </summary>
+    public string? ErrorCode { get; init; }
+
+    /// <summary>
+    /// Error message (if not successful).
+    /// </summary>
+    public string? ErrorMessage { get; init; }
+}

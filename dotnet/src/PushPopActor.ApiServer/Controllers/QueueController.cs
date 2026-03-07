@@ -229,4 +229,67 @@ public class QueueController : ControllerBase
             return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
         }
     }
+
+    /// <summary>
+    /// Extend an existing lock by adding additional TTL seconds.
+    /// </summary>
+    [HttpPost("{queueId}/extend-lock")]
+    public async Task<IActionResult> ExtendLock(
+        string queueId,
+        [FromBody] ApiExtendLockRequest request)
+    {
+        try
+        {
+            _logger.LogDebug($"ExtendLock request for queue {queueId} with lock_id {request.LockId}");
+
+            var actorId = new ActorId(queueId);
+
+            var result = await _actorInvoker.InvokeMethodAsync<ExtendLockRequest, ExtendLockResponse>(
+                actorId,
+                _actorConfig.ActorTypeName,
+                ActorMethodNames.ExtendLock,
+                new ExtendLockRequest
+                {
+                    LockId = request.LockId,
+                    AdditionalTtlSeconds = request.AdditionalTtlSeconds
+                });
+
+            // Check for error codes
+            if (!result.Success)
+            {
+                var errorResponse = new ApiErrorResponse(result.ErrorMessage ?? "Failed to extend lock");
+
+                // Return 410 Gone if lock expired
+                if (result.ErrorCode == "LOCK_EXPIRED")
+                {
+                    return StatusCode(410, errorResponse);
+                }
+
+                // Return 404 if lock not found
+                if (result.ErrorCode == "LOCK_NOT_FOUND")
+                {
+                    return NotFound(errorResponse);
+                }
+
+                // Return 400 for invalid lock_id or TTL
+                if (result.ErrorCode == "INVALID_LOCK_ID" || result.ErrorCode == "INVALID_TTL")
+                {
+                    return BadRequest(errorResponse);
+                }
+
+                // Default to 400 for other failures
+                return BadRequest(errorResponse);
+            }
+
+            return Ok(new ApiExtendLockResponse(
+                NewExpiresAt: (long)result.NewExpiresAt,
+                LockId: request.LockId
+            ));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error extending lock for queue {queueId}");
+            return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
+        }
+    }
 }

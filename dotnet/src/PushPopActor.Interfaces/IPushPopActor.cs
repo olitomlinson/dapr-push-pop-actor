@@ -33,4 +33,11 @@ public interface IPushPopActor : IActor
     /// <param name="request">Acknowledge request containing lock_id</param>
     /// <returns>Acknowledge response with success status and details</returns>
     Task<AcknowledgeResponse> Acknowledge(AcknowledgeRequest request);
+
+    /// <summary>
+    /// Extend an existing lock by adding additional TTL seconds.
+    /// </summary>
+    /// <param name="request">ExtendLock request containing lock_id and additional_ttl_seconds</param>
+    /// <returns>ExtendLock response with success status and new expiration time</returns>
+    Task<ExtendLockResponse> ExtendLock(ExtendLockRequest request);
 }

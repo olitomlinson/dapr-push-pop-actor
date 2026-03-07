@@ -243,4 +243,133 @@ public class LockAndAcknowledgementTests(DaprTestFixture fixture)
         // Lock expiration times should be very close (within 1 second)
         Assert.True(Math.Abs(popLockedResponse.LockExpiresAt!.Value - popWithAckLockedResponse.LockExpiresAt!.Value) < 1);
     }
+
+    [Fact]
+    public async Task ExtendLock_ValidLock_ExtendsExpiry()
+    {
+        // Arrange - Push an item and create a lock
+        var queueId = $"{fixture.QueueId}-extend-lock-test-{Guid.NewGuid():N}";
+        var itemElement = JsonSerializer.SerializeToElement(new { id = 1, value = "test-item" });
+        var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
+        var pushResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/push", pushRequest);
+        pushResponse.EnsureSuccessStatusCode();
+
+        // Pop with acknowledgement (creates lock with 10s TTL)
+        var popWithAckRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{queueId}/pop");
+        popWithAckRequest.Headers.Add("require_ack", "true");
+        popWithAckRequest.Headers.Add("ttl_seconds", "10");
+        var popWithAckResponse = await fixture.ApiClient.SendAsync(popWithAckRequest);
+        popWithAckResponse.EnsureSuccessStatusCode();
+
+        var popWithAckResult = await popWithAckResponse.Content.ReadFromJsonAsync<ApiPopWithAckResponse>();
+        Assert.NotNull(popWithAckResult);
+        Assert.NotNull(popWithAckResult.LockId);
+        Assert.NotNull(popWithAckResult.LockExpiresAt);
+
+        var originalExpiresAt = popWithAckResult.LockExpiresAt.Value;
+
+        // Act - Extend lock by 30 seconds
+        var extendLockRequest = new ApiExtendLockRequest(popWithAckResult.LockId, AdditionalTtlSeconds: 30);
+        var extendLockResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/extend-lock", extendLockRequest);
+
+        // Assert - Should return 200 OK with new expiry time
+        Assert.Equal(HttpStatusCode.OK, extendLockResponse.StatusCode);
+
+        var extendLockResult = await extendLockResponse.Content.ReadFromJsonAsync<ApiExtendLockResponse>();
+        Assert.NotNull(extendLockResult);
+        Assert.NotNull(extendLockResult.NewExpiresAt);
+        Assert.Equal(popWithAckResult.LockId, extendLockResult.LockId);
+
+        // New expiry should be ~30 seconds later (within 2 seconds tolerance)
+        var expectedNewExpiresAt = originalExpiresAt + 30;
+        Assert.True(Math.Abs(extendLockResult.NewExpiresAt - expectedNewExpiresAt) < 2);
+
+        // Verify queue is still locked
+        var blockedPopRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{queueId}/pop");
+        blockedPopRequest.Headers.Add("require_ack", "false");
+        var blockedPopResponse = await fixture.ApiClient.SendAsync(blockedPopRequest);
+        Assert.Equal(HttpStatusCode.Locked, blockedPopResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task ExtendLock_PreventsExpiry_AllowsLaterAcknowledge()
+    {
+        // This test verifies that extending a lock actually prevents expiry
+        // and allows acknowledgement to succeed later
+
+        // Arrange - Push an item
+        var queueId = $"{fixture.QueueId}-extend-prevents-expiry-{Guid.NewGuid():N}";
+        var itemElement = JsonSerializer.SerializeToElement(new { id = 1, value = "test-item" });
+        var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
+        var pushResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/push", pushRequest);
+        pushResponse.EnsureSuccessStatusCode();
+
+        // Pop with acknowledgement (creates lock with 3s TTL)
+        var popWithAckRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{queueId}/pop");
+        popWithAckRequest.Headers.Add("require_ack", "true");
+        popWithAckRequest.Headers.Add("ttl_seconds", "3");
+        var popWithAckResponse = await fixture.ApiClient.SendAsync(popWithAckRequest);
+        popWithAckResponse.EnsureSuccessStatusCode();
+
+        var popWithAckResult = await popWithAckResponse.Content.ReadFromJsonAsync<ApiPopWithAckResponse>();
+        Assert.NotNull(popWithAckResult);
+        Assert.NotNull(popWithAckResult.LockId);
+
+        // Wait 2 seconds (lock would expire at 3s)
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Act - Extend lock by 5 more seconds
+        var extendLockRequest = new ApiExtendLockRequest(popWithAckResult.LockId, AdditionalTtlSeconds: 5);
+        var extendLockResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/extend-lock", extendLockRequest);
+        extendLockResponse.EnsureSuccessStatusCode();
+
+        // Wait 2 more seconds (original lock would have expired at 3s, but extension keeps it alive)
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Assert - Acknowledge should still work (lock is still valid)
+        var ackRequest = new ApiAcknowledgeRequest(popWithAckResult.LockId);
+        var ackResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/acknowledge", ackRequest);
+
+        Assert.Equal(HttpStatusCode.OK, ackResponse.StatusCode);
+
+        var ackResult = await ackResponse.Content.ReadFromJsonAsync<ApiAcknowledgeResponse>();
+        Assert.NotNull(ackResult);
+        Assert.True(ackResult.Success);
+        Assert.Equal(1, ackResult.ItemsAcknowledged);
+
+        // Queue should now be empty
+        var popRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{queueId}/pop");
+        popRequest.Headers.Add("require_ack", "false");
+        var popResponse = await fixture.ApiClient.SendAsync(popRequest);
+        Assert.Equal(HttpStatusCode.NoContent, popResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task ExtendLock_InvalidLock_Returns404()
+    {
+        // Arrange - Push an item and create a lock
+        var queueId = $"{fixture.QueueId}-extend-invalid-lock-{Guid.NewGuid():N}";
+        var itemElement = JsonSerializer.SerializeToElement(new { id = 1, value = "test-item" });
+        var pushRequest = new ApiPushRequest(itemElement, Priority: 1);
+        var pushResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/push", pushRequest);
+        pushResponse.EnsureSuccessStatusCode();
+
+        // Pop with acknowledgement (creates lock)
+        var popWithAckRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{queueId}/pop");
+        popWithAckRequest.Headers.Add("require_ack", "true");
+        popWithAckRequest.Headers.Add("ttl_seconds", "10");
+        var popWithAckResponse = await fixture.ApiClient.SendAsync(popWithAckRequest);
+        popWithAckResponse.EnsureSuccessStatusCode();
+
+        // Act - Try to extend with invalid lock ID
+        var extendLockRequest = new ApiExtendLockRequest("invalid-lock-id-12345", AdditionalTtlSeconds: 30);
+        var extendLockResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/extend-lock", extendLockRequest);
+
+        // Assert - Should return 404 Not Found or 400 Bad Request
+        Assert.True(
+            extendLockResponse.StatusCode == HttpStatusCode.NotFound ||
+            extendLockResponse.StatusCode == HttpStatusCode.BadRequest,
+            $"Expected 404 or 400, got {extendLockResponse.StatusCode}"
+        );
+    }
 }
