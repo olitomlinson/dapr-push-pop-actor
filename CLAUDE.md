@@ -51,10 +51,11 @@
 using PushPopActor.Interfaces;
 
 // Main methods:
-Task<PushResponse> Push(PushRequest request);           // Add to end (FIFO)
-Task<PopResponse> Pop();                                // Remove single item from front
-Task<PopWithAckResponse> PopWithAck(PopWithAckRequest); // Pop with acknowledgement
-Task<AcknowledgeResponse> Acknowledge(AcknowledgeRequest); // Acknowledge popped items
+Task<PushResponse> Push(PushRequest request);              // Add to end (FIFO)
+Task<PopResponse> Pop();                                   // Remove single item from front
+Task<PopWithAckResponse> PopWithAck(PopWithAckRequest);    // Pop with acknowledgement (creates lock)
+Task<AcknowledgeResponse> Acknowledge(AcknowledgeRequest); // Acknowledge and remove locked items
+Task<ExtendLockResponse> ExtendLock(ExtendLockRequest);    // Extend existing lock TTL
 ```
 
 ### Usage Modes
@@ -129,9 +130,9 @@ Run integration tests before committing:
 
 ### Test Organization
 
-- **Actor unit tests** (21 tests in `PushPopActorTests.cs`): Business logic in `PushPopActor.cs`
-- **Controller unit tests** (10 tests in `QueueControllerTests.cs`): HTTP status codes, request validation
-- **Integration tests** (12 tests in `PushPopActor.IntegrationTests`): Full stack end-to-end with Dapr + PostgreSQL
+- **Actor unit tests** (28 tests in `PushPopActorTests.cs`): Business logic in `PushPopActor.cs`
+- **Controller unit tests** (14 tests in `QueueControllerTests.cs`): HTTP status codes, request validation
+- **Integration tests** (15 tests in `PushPopActor.IntegrationTests`): Full stack end-to-end with Dapr + PostgreSQL
 
 ### When to Run Tests
 
@@ -140,7 +141,64 @@ Run integration tests before committing:
 - **After refactoring**: Run both unit and integration tests
 - **When fixing bugs**: Write failing test FIRST, then fix code
 
-### TDD Workflow
+### Outside-In TDD Workflow (Recommended for New Features)
+
+When adding new features to the API, follow this **outside-in** approach to ensure you build exactly what users need:
+
+**1. Integration Tests First** (Define external API contract)
+   - Write failing integration tests that describe the user-facing HTTP API
+   - This defines the "what" - what should the feature do from a user's perspective?
+   - Tests compile but fail because endpoints don't exist yet
+   - Example: `ExtendLock_ValidLock_ExtendsExpiry` - full HTTP flow with real assertions
+
+**2. API Models** (Make integration tests compile)
+   - Add request/response models to `ApiServer/Models/ApiModels.cs`
+   - Just enough to make integration tests compile and route correctly
+
+**3. Controller Tests** (Define HTTP layer behavior)
+   - Write failing controller unit tests using mocked actor responses
+   - Test HTTP status code mappings: 200 OK, 400 Bad Request, 404 Not Found, 410 Gone, etc.
+   - Verify error handling and response transformations
+   - Example: `ExtendLock_LockExpired_Returns410`
+
+**4. Actor Interface Models** (Make controller tests compile)
+   - Add actor request/response models to `Interfaces/Models.cs`
+   - Update `IPushPopActor.cs` interface
+   - Add method name constant to `ActorMethodNames.cs`
+
+**5. Implement Controller Logic** (Make controller tests pass)
+   - Implement the controller endpoint
+   - Map actor responses to HTTP status codes
+   - Handle error cases appropriately
+
+**6. Actor Tests** (Define business logic)
+   - Write failing actor unit tests with mocked `IActorStateManager`
+   - Test all business logic paths: success, validation errors, edge cases
+   - Example: `ExtendLock_MultipleExtensions_Accumulates`
+
+**7. Implement Actor Logic** (Make actor tests pass)
+   - Implement the actor method in `PushPopActor.cs`
+   - Focus on correctness - tests guide the implementation
+   - All tests should now pass ✅
+
+**Why Outside-In?**
+- ✅ Ensures you build what users actually need (not over-engineering)
+- ✅ Integration tests fail early if layers don't connect properly
+- ✅ Each layer is tested independently (fast feedback)
+- ✅ Prevents implementing features that don't match API design
+- ✅ Clear progression: external contract → HTTP layer → business logic
+
+**Fast Feedback Loop:**
+```bash
+# After each implementation step, run relevant tests
+dotnet test --filter "FullyQualifiedName~ExtendLock"  # Run specific feature tests
+dotnet test                                            # Run all unit tests (fast)
+./build-and-test.sh                                   # Run integration tests (slow)
+```
+
+### Traditional TDD Workflow (For Internal Changes)
+
+For changes that don't affect the external API (refactoring, bug fixes, internal optimizations):
 
 1. Write failing test that describes desired behavior
 2. Run test to confirm it fails (red) ❌
@@ -187,7 +245,9 @@ This pattern enables controller unit tests to mock actor responses and verify HT
 
 ### REST API Endpoints
 - `POST /queue/{queueId}/push` - Push item
-- `POST /queue/{queueId}/pop` - Pop single item
+- `POST /queue/{queueId}/pop` - Pop single item (with optional `require_ack` header for locking)
+- `POST /queue/{queueId}/acknowledge` - Acknowledge and remove locked item
+- `POST /queue/{queueId}/extend-lock` - Extend existing lock TTL
 - `GET /health` - Health check
 
 ## Development Conventions
