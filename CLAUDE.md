@@ -12,35 +12,13 @@
 
 ## Project Structure
 
-```
-.
-├── dotnet/
-│   ├── src/
-│   │   ├── DaprMQ/                    # Main actor implementation
-│   │   │   ├── QueueActor.cs              # Core actor class
-│   │   │   └── QueueActor.csproj          # Project file
-│   │   ├── DaprMQ.Interfaces/         # Actor interfaces and models
-│   │   │   ├── IQueueActor.cs             # Actor interface definition
-│   │   │   ├── Models.cs                    # Request/Response models
-│   │   │   └── DaprMQ.Interfaces.csproj
-│   │   └── DaprMQ.ApiServer/          # ASP.NET Core API server
-│   │       ├── Program.cs                   # API server entry point
-│   │       ├── Controllers/QueueController.cs # REST API endpoints
-│   │       └── DaprMQ.ApiServer.csproj
-│   └── tests/
-│       └── DaprMQ.Tests/              # Unit tests
-│           ├── QueueActorTests.cs         # xUnit tests
-│           └── DaprMQ.Tests.csproj
-├── docs/
-│   ├── QUICKSTART.md                        # Getting started guide
-│   ├── ARCHITECTURE.md                      # Design details
-│   └── API_REFERENCE.md                     # Complete API docs
-├── dapr/
-│   ├── components/                          # Dapr component configs (state store)
-│   └── config/                              # Dapr runtime config
-└── docker-compose.yml                       # Full stack (PostgreSQL, Dapr, API)
-
-```
+- `dotnet/src/DaprMQ/` - Actor implementation (QueueActor.cs, QueueActor.csproj)
+- `dotnet/src/DaprMQ.Interfaces/` - Interfaces and models (IQueueActor.cs, Models.cs)
+- `dotnet/src/DaprMQ.ApiServer/` - REST/gRPC API (Program.cs, Controllers/, Services/, Protos/)
+- `dotnet/tests/DaprMQ.Tests/` - Unit tests (QueueActorTests.cs, QueueControllerTests.cs, DaprMQGrpcServiceTests.cs)
+- `docs/` - QUICKSTART.md, ARCHITECTURE.md, API_REFERENCE.md
+- `dapr/components/` - Dapr component configs (state store)
+- `dapr/config/` - Dapr runtime config
 
 ## Core API
 
@@ -76,33 +54,26 @@ Task<ExtendLockResponse> ExtendLock(ExtendLockRequest);    // Extend existing lo
 
 ## Technology Stack
 
-- **Dapr SDK**: `Dapr.Actors`, `Dapr.AspNetCore`, `Dapr.Client`
-- **Web Framework**: ASP.NET Core 10.0 (HTTP REST + gRPC)
-- **gRPC**: `Grpc.AspNetCore` 2.70.0, Protocol Buffers
-- **Testing**: xUnit, Moq
-- **Language**: C# 13 with .NET 10.0
+**Runtime:** C# 13, .NET 10.0 | **Framework:** ASP.NET Core (HTTP + gRPC) | **Dapr:** Dapr.Actors, Dapr.AspNetCore, Dapr.Client | **gRPC:** Grpc.AspNetCore 2.70.0, Protocol Buffers | **Testing:** xUnit, Moq
 
 ## Common Commands
 
 ```bash
 # Build
-cd dotnet
-dotnet build                                # Build all projects
-dotnet build src/DaprMQ              # Build actor library
+dotnet build                                          # All projects
+dotnet build src/DaprMQ                              # Actor library only
 
 # Test
-dotnet test                                 # Run all tests
-dotnet test --logger "console;verbosity=detailed"  # Verbose output
+dotnet test                                           # Run all tests
+./build-and-test.sh                                  # Full integration (Docker)
 
 # Run API Server
 cd src/DaprMQ.ApiServer
-dapr run --app-id daprmq-api \
-  --app-port 5000 \
-  --resources-path ../../dapr/components \
-  -- dotnet run
+dapr run --app-id daprmq-api --app-port 5000 \
+  --resources-path ../../dapr/components -- dotnet run
 
 # Docker
-docker-compose up                          # Full stack
+docker-compose up                                     # Full stack
 ```
 
 ## Testing & Development Workflow
@@ -146,57 +117,23 @@ Run integration tests before committing:
 
 ### Outside-In TDD Workflow (Recommended for New Features)
 
-When adding new features to the API, follow this **outside-in** approach to ensure you build exactly what users need:
+Follow this workflow to ensure API-first design:
 
-**1. Integration Tests First** (Define external API contract)
-   - Write failing integration tests that describe the user-facing HTTP API
-   - This defines the "what" - what should the feature do from a user's perspective?
-   - Tests compile but fail because endpoints don't exist yet
-   - Example: `ExtendLock_ValidLock_ExtendsExpiry` - full HTTP flow with real assertions
+1. **Integration Tests** - Write failing tests for HTTP API contract (what users see)
+2. **API Models** - Add ApiModels.cs request/response types (make integration tests compile)
+3. **Controller Tests** - Write unit tests with mocked actor, verify HTTP status codes
+4. **Actor Models** - Add Interfaces/Models.cs types, update IQueueActor interface
+5. **Controller Logic** - Implement controller endpoint (make controller tests pass)
+6. **Actor Tests** - Write unit tests with mocked IActorStateManager (business logic)
+7. **Actor Logic** - Implement QueueActor method (make all tests pass)
 
-**2. API Models** (Make integration tests compile)
-   - Add request/response models to `ApiServer/Models/ApiModels.cs`
-   - Just enough to make integration tests compile and route correctly
+**Why:** Ensures layers connect properly, prevents over-engineering, maintains clear API → business logic progression.
 
-**3. Controller Tests** (Define HTTP layer behavior)
-   - Write failing controller unit tests using mocked actor responses
-   - Test HTTP status code mappings: 200 OK, 400 Bad Request, 404 Not Found, 410 Gone, etc.
-   - Verify error handling and response transformations
-   - Example: `ExtendLock_LockExpired_Returns410`
-
-**4. Actor Interface Models** (Make controller tests compile)
-   - Add actor request/response models to `Interfaces/Models.cs`
-   - Update `IQueueActor.cs` interface
-   - Add method name constant to `ActorMethodNames.cs`
-
-**5. Implement Controller Logic** (Make controller tests pass)
-   - Implement the controller endpoint
-   - Map actor responses to HTTP status codes
-   - Handle error cases appropriately
-
-**6. Actor Tests** (Define business logic)
-   - Write failing actor unit tests with mocked `IActorStateManager`
-   - Test all business logic paths: success, validation errors, edge cases
-   - Example: `ExtendLock_MultipleExtensions_Accumulates`
-
-**7. Implement Actor Logic** (Make actor tests pass)
-   - Implement the actor method in `QueueActor.cs`
-   - Focus on correctness - tests guide the implementation
-   - All tests should now pass ✅
-
-**Why Outside-In?**
-- ✅ Ensures you build what users actually need (not over-engineering)
-- ✅ Integration tests fail early if layers don't connect properly
-- ✅ Each layer is tested independently (fast feedback)
-- ✅ Prevents implementing features that don't match API design
-- ✅ Clear progression: external contract → HTTP layer → business logic
-
-**Fast Feedback Loop:**
+**Fast Feedback:**
 ```bash
-# After each implementation step, run relevant tests
-dotnet test --filter "FullyQualifiedName~ExtendLock"  # Run specific feature tests
-dotnet test                                            # Run all unit tests (fast)
-./build-and-test.sh                                   # Run integration tests (slow)
+dotnet test --filter "FullyQualifiedName~ExtendLock"  # Feature-specific
+dotnet test                                            # All unit tests
+./build-and-test.sh                                   # Full integration
 ```
 
 ### Traditional TDD Workflow (For Internal Changes)
@@ -274,35 +211,28 @@ service DaprMQ {
 - **HTTP/2 Binary Protocol**: Lower latency than JSON over HTTP/1.1
 - **Type Safety**: Protocol Buffers provide strongly-typed contracts
 - **Cross-Language**: Proto files enable client generation in any language
-- **Same Port**: HTTP and gRPC run on port 5000 (ASP.NET Core auto-negotiates)
 
-**gRPC Status Code Mappings**:
-```
-HTTP 200 → gRPC OK (0)
-HTTP 204 → gRPC OK with empty result
-HTTP 400 → gRPC INVALID_ARGUMENT (3)
-HTTP 404 → gRPC NOT_FOUND (5)
-HTTP 410 → gRPC FAILED_PRECONDITION (9) - lock expired
-HTTP 423 → gRPC UNAVAILABLE (14) - resource locked
-HTTP 500 → gRPC INTERNAL (13)
-```
+**Port Configuration:**
 
-**Testing with grpcurl**:
+| Environment | HTTP | gRPC |
+|-------------|------|------|
+| Local Dev   | 5000 | 5001 |
+| Docker Host 1-3 | 8000-8003 | 8100-8103 |
+| Docker Gateway | 8002 | 8102 |
+
+**Note:** Separate ports required - Kestrel cannot negotiate HTTP/2 without TLS on same port.
+
+**Status Mappings:** 200→OK(0), 204→OK(empty), 400→INVALID_ARGUMENT(3), 404→NOT_FOUND(5), 410→FAILED_PRECONDITION(9), 423→UNAVAILABLE(14), 500→INTERNAL(13)
+
+**Testing with grpcurl** (use port 5001 for local dev, 810x for docker):
 ```bash
-# List services
-grpcurl -plaintext localhost:5000 list
-
 # Push item
 grpcurl -plaintext -d '{"queue_id":"test","item_json":"{\"msg\":\"hello\"}","priority":1}' \
-  localhost:5000 daprmq.DaprMQ/Push
-
-# Pop item
-grpcurl -plaintext -d '{"queue_id":"test"}' \
-  localhost:5000 daprmq.DaprMQ/Pop
+  localhost:5001 daprmq.DaprMQ/Push
 
 # Pop with acknowledgement
 grpcurl -plaintext -d '{"queue_id":"test","ttl_seconds":30}' \
-  localhost:5000 daprmq.DaprMQ/PopWithAck
+  localhost:5001 daprmq.DaprMQ/PopWithAck
 ```
 
 **C# Client Example**:
@@ -310,61 +240,28 @@ grpcurl -plaintext -d '{"queue_id":"test","ttl_seconds":30}' \
 using Grpc.Net.Client;
 using DaprMQ.ApiServer.Grpc;
 
-var channel = GrpcChannel.ForAddress("http://localhost:5000");
+var channel = GrpcChannel.ForAddress("http://localhost:5001");
 var client = new DaprMQ.DaprMQClient(channel);
 
-// Push
-var pushResponse = await client.PushAsync(new PushRequest
-{
-    QueueId = "my-queue",
-    ItemJson = "{\"id\":1,\"name\":\"test\"}",
-    Priority = 1
-});
+var response = await client.PopWithAckAsync(new PopWithAckRequest
+    { QueueId = "my-queue", TtlSeconds = 30 });
 
-// Pop with acknowledgement
-var popResponse = await client.PopWithAckAsync(new PopWithAckRequest
-{
-    QueueId = "my-queue",
-    TtlSeconds = 30
-});
-
-if (popResponse.ResultCase == PopWithAckResponse.ResultOneofCase.Success)
-{
-    var lockId = popResponse.Success.LockId;
-    // Process item...
-
-    // Acknowledge
+if (response.ResultCase == PopWithAckResponse.ResultOneofCase.Success) {
+    // Process item, then acknowledge
     await client.AcknowledgeAsync(new AcknowledgeRequest
-    {
-        QueueId = "my-queue",
-        LockId = lockId
-    });
+        { QueueId = "my-queue", LockId = response.Success.LockId });
 }
 ```
 
 **gRPC Reflection (Service Discovery)**:
 
-The server enables gRPC Server Reflection, which allows clients to discover services and methods at runtime without needing the `.proto` file.
+Server Reflection enabled - discover services at runtime without `.proto` file.
 
 ```bash
-# Discover available services (use gRPC port 5001 for local dev, or 810x for docker)
+# Discover available services (see port table above)
 grpcurl -plaintext localhost:5001 list
-
-# Output:
-# grpc.reflection.v1.ServerReflection
-# daprmq.DaprMQ
-
-# Describe a service
 grpcurl -plaintext localhost:5001 describe daprmq.DaprMQ
-
-# Describe a specific method
 grpcurl -plaintext localhost:5001 describe daprmq.DaprMQ.Push
-
-# Describe a message type
-grpcurl -plaintext localhost:5001 describe daprmq.PushRequest
-
-# Via Docker (gateway instance):
-grpcurl -plaintext localhost:8102 list
 ```
 
 **Proto File Access**:
@@ -408,15 +305,7 @@ builder.WebHost.UseKestrel(options =>
 });
 ```
 
-**Port Assignment**:
-- **Local development**: REST on 5000, gRPC on 5001
-- **Docker (via docker-compose.yml)**:
-  - Host 1: REST on 8000, gRPC on 8100
-  - Host 2: REST on 8001, gRPC on 8101
-  - Gateway: REST on 8002, gRPC on 8102
-  - Host 3: REST on 8003, gRPC on 8103
-
-This dual-port configuration is **required** because Kestrel cannot negotiate HTTP/2 without TLS when supporting both protocols on the same port.
+This dual-port configuration is **required** because Kestrel cannot negotiate HTTP/2 without TLS when supporting both protocols on the same port (see port table above).
 
 **ARM64 (Apple Silicon) Support**:
 
@@ -430,27 +319,9 @@ The proto files are automatically generated during build from [daprmq.proto](dot
 
 ## Development Conventions
 
-### Code Style
-- Language: C# 13 with .NET 10.0
-- Nullable reference types: Enabled
-- Async/await: All actor methods are async Tasks
-
-### Testing
-- Framework: xUnit
-- Mocking: Moq for IActorStateManager
-- Coverage target: >95%
-- Test file naming: `*Tests.cs`
-
-### Namespace Patterns
-```csharp
-// External imports
-using Dapr.Actors;
-using Dapr.Actors.Runtime;
-using Dapr.Client;
-
-// Internal imports
-using DaprMQ.Interfaces;
-```
+- **Language:** C# 13 (.NET 10.0), nullable reference types enabled, async Tasks
+- **Testing:** xUnit + Moq, >95% coverage target, `*Tests.cs` naming
+- **Imports:** External first (Dapr.*), then internal (DaprMQ.*)
 
 ## Important Notes
 
@@ -469,34 +340,24 @@ using DaprMQ.Interfaces;
 
 6. **Concurrency**: One operation per actor instance at a time
 
-7. **Direct Actor API Access**: You can interact directly with actors via Dapr's HTTP API for testing and debugging. This allows you to invoke actor methods and inspect state without going through the application's REST API:
+7. **Direct Actor API Access**: Interact with actors via Dapr's HTTP API (port 3500) for testing/debugging:
    ```bash
-   # Invoke actor method directly
+   # Invoke actor method
    curl -X POST http://localhost:3500/v1.0/actors/DaprMQ/my-queue/method/Push \
-     -H "Content-Type: application/json" \
-     -d '{"item": {"test": "data"}}'
-
-   # Get actor state directly (useful for debugging)
-   curl http://localhost:3500/v1.0/actors/DaprMQ/my-queue/state/queue
+     -H "Content-Type: application/json" -d '{"item": {"test": "data"}}'
    ```
-   - Dapr sidecar typically runs on port 3500 (configurable)
-   - Actor type: `DaprMQ`
-   - State key: `queue`
-   - Full API reference: https://docs.dapr.io/reference/api/actors_api/
+   Actor type: `DaprMQ`, State key: `queue`. See https://docs.dapr.io/reference/api/actors_api/
 
-8. **Nonremoting Actor Invocations**: The API server uses Dapr's nonremoting mechanism (`InvokeMethodAsync`) for actor calls instead of interface-based remoting. This provides better decoupling and enables cross-language scenarios:
+8. **Nonremoting Actor Invocations**: API server uses `InvokeMethodAsync` for better decoupling and cross-language support:
    ```csharp
-   // Nonremoting approach (used by API server)
+   // Nonremoting (API server)
    var proxy = ActorProxy.Create(actorId, "QueueActor");
    var result = await proxy.InvokeMethodAsync<PushRequest, PushResponse>("Push", request);
 
-   // Remoting approach (still supported for library users)
+   // Remoting (library users)
    var proxy = ActorProxy.Create<IQueueActor>(actorId, "QueueActor");
    var result = await proxy.Push(request);
    ```
-   - Both approaches work with the same actor implementation
-   - Nonremoting is recommended for API servers and cross-language scenarios
-   - Remoting is convenient for type-safe C# applications
 
 ## Future Considerations
 
