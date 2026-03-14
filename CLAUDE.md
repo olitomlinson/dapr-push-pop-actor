@@ -41,6 +41,55 @@ Task<ExtendLockResponse> ExtendLock(ExtendLockRequest);    // Extend existing lo
 2. **API Server Mode**: Run example REST API (`daprmq-server`)
 3. **Docker Mode**: Full stack with PostgreSQL + Dapr placement
 
+## Error Handling Patterns
+
+### ErrorCode Enum
+All actor operations return responses with optional `ErrorCode`:
+- `QueueFull` - Queue reached capacity
+- `QueueEmpty` - No items available to pop
+- `Locked` - Item already locked by another consumer
+- `LockNotFound` - Lock ID doesn't exist or expired
+- `LockExpired` - Lock TTL exceeded
+- `ValidationError` - Invalid request (e.g., negative priority)
+- `ActorNotFound` - Queue actor doesn't exist
+
+**Location**: [Interfaces/Models.cs](dotnet/src/DaprMQ.Interfaces/Models.cs)
+
+### Response Pattern
+Actor responses use discriminated union pattern:
+```csharp
+// Check for errors first
+if (response.ErrorCode.HasValue) {
+    // Handle error based on ErrorCode
+}
+// Then handle success
+var item = response.ItemJson;
+```
+
+### HTTP Status Mappings
+Controller maps ErrorCode → HTTP status:
+- `QueueEmpty` → 204 No Content
+- `Locked` → 423 Locked
+- `LockNotFound` / `LockExpired` → 410 Gone
+- `ValidationError` → 400 Bad Request
+- `ActorNotFound` → 404 Not Found
+- Success → 200 OK
+
+**Location**: [Controllers/QueueController.cs](dotnet/src/DaprMQ.ApiServer/Controllers/QueueController.cs)
+
+### gRPC Response Pattern
+gRPC uses protobuf `oneof` (union types):
+```csharp
+return new PopResponse {
+    Success = new PopSuccess { ItemJson = item }
+};
+// OR
+return new PopResponse {
+    Empty = new PopEmpty { Message = "Queue empty" }
+};
+```
+**Location**: [Services/DaprMQGrpcService.cs](dotnet/src/DaprMQ.ApiServer/Services/DaprMQGrpcService.cs)
+
 ## Key Files
 
 - **[dotnet/src/DaprMQ/QueueActor.cs](dotnet/src/DaprMQ/QueueActor.cs)**: Core `DaprMQ` implementation
@@ -75,6 +124,42 @@ dapr run --app-id daprmq-api --app-port 5000 \
 # Docker
 docker-compose up                                     # Full stack
 ```
+
+## Configuration
+
+### Environment Variables
+
+**Actor Configuration:**
+- `ACTOR_TYPE_NAME` (default: `"QueueActor"`) - Dapr actor type name
+- `REGISTER_ACTORS` (default: `true`) - Set `false` for gateway instances
+
+**Queue Performance:**
+- `SEGMENT_DELETION_RETENTION_SECONDS` (default: `60`) - Cleanup retention for offloaded segments
+- `SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS` (default: `60`, min: `1`) - Cleanup scan frequency
+
+**Ports:**
+- `ASPNETCORE_URLS` (default: `http://+:5000`) - HTTP port (gRPC uses next port)
+
+**Example (docker-compose.yml):**
+```yaml
+environment:
+  - ASPNETCORE_URLS=http://+:8080
+  - REGISTER_ACTORS=false
+  - SEGMENT_DELETION_RETENTION_SECONDS=120
+```
+
+### Lock Configuration (Constants)
+- **Default TTL**: 30 seconds
+- **Min TTL**: 1 second
+- **Max TTL**: 300 seconds (5 minutes)
+- Specified per `PopWithAck` request
+
+### Queue Constants
+- **Segment size**: 100 items per segment
+- **Actor idle timeout**: 60 seconds
+- **Lock ID length**: 11 characters
+
+**Files**: [Program.cs](dotnet/src/DaprMQ.ApiServer/Program.cs), [QueueActor.cs:96-135](dotnet/src/DaprMQ/QueueActor.cs#L96-L135)
 
 ## Testing & Development Workflow
 
@@ -165,6 +250,42 @@ public class DaprActorInvoker : IActorInvoker { ... }
 
 This pattern enables controller unit tests to mock actor responses and verify HTTP status code mappings without requiring Dapr runtime.
 
+### Common Patterns
+
+**Actor Method Constants** (avoid magic strings):
+```csharp
+using DaprMQ.ApiServer.Constants;
+
+await _actorInvoker.InvokeMethodAsync<PushRequest, PushResponse>(
+    actorId,
+    ActorMethodNames.Push,  // Use constant, not "Push" string
+    request);
+```
+**Location**: [Constants/ActorMethodNames.cs](dotnet/src/DaprMQ.ApiServer/Constants/ActorMethodNames.cs)
+
+**Actor Invocation (from controllers):**
+```csharp
+var result = await _actorInvoker.InvokeMethodAsync<PopResponse>(
+    new ActorId(queueId),
+    ActorMethodNames.Pop);
+```
+
+**Validation Pattern** (two layers):
+1. **Controller**: Validates request format, required fields → 400 Bad Request
+2. **Actor**: Validates business logic (e.g., priority range, TTL bounds) → ErrorCode in response
+
+**Test Mocking Pattern** (StateManager):
+```csharp
+var stateData = new Dictionary<string, object>();
+mock.Setup(m => m.TryGetStateAsync<QueueMetadata>(...))
+    .ReturnsAsync((string key, CancellationToken ct) => {
+        return stateData.ContainsKey(key)
+            ? new ConditionalValue<QueueMetadata>(true, (QueueMetadata)stateData[key])
+            : new ConditionalValue<QueueMetadata>(false, null);
+    });
+```
+**Location**: [QueueActorTests.cs](dotnet/tests/DaprMQ.Tests/QueueActorTests.cs)
+
 ## Architecture Notes
 
 ### Actor Model
@@ -182,6 +303,31 @@ This pattern enables controller unit tests to mock actor responses and verify HT
 - Pop removes from head segment, deletes empty segments automatically
 - State saved after every operation
 - **Benefits**: Constant memory/network per operation regardless of queue size
+
+### State Key Conventions
+
+**Three-tier naming pattern:**
+1. **Queue segments**: `queue_{priority}_seg_{segmentNum}` - In-memory segment storage
+2. **Metadata**: `metadata_{priority}` - Tracks head/tail segment numbers, counts
+3. **Lock state**: `locks` - All active locks for the queue
+4. **Offloaded segments**: `offloaded_queue_{priority}_seg_{segmentNum}_{actorId}` - External storage
+5. **Deletion metadata**: `segment_deletion_metadata` - Tracks pending deletions
+
+**Example state operations:**
+```csharp
+// Read metadata
+var metadata = await StateManager.GetStateAsync<QueueMetadata>($"metadata_{priority}");
+
+// Save segment
+await StateManager.SetStateAsync($"queue_{priority}_seg_{segmentNum}", items);
+
+// Atomic commit
+await StateManager.SaveStateAsync();
+```
+
+**Pattern**: All state changes batched, then committed with single `SaveStateAsync()` call.
+
+**Location**: [QueueActor.cs](dotnet/src/DaprMQ/QueueActor.cs)
 
 ### REST API Endpoints
 - `POST /queue/{queueId}/push` - Push item
@@ -358,6 +504,15 @@ The proto files are automatically generated during build from [daprmq.proto](dot
    var proxy = ActorProxy.Create<IQueueActor>(actorId, "QueueActor");
    var result = await proxy.Push(request);
    ```
+
+9. **Lock Architecture**: Locks are stored in-place (not separate queue). When item is locked, it remains in queue with `LockId` attached until acknowledged. This enables:
+   - Dead letter handling (move locked items on expiry)
+   - Lock extension (modify TTL without re-queuing)
+   - FIFO guarantee (position preserved during lock)
+
+10. **Segment Offloading**: When queue grows large, older segments move to external Dapr state store. In-memory buffer keeps recent segments for fast access. Offloaded segments cleaned up after `SEGMENT_DELETION_RETENTION_SECONDS` (default 60s).
+
+11. **Dead Letter Queue**: DLQ is a separate actor instance with ID `{originalId}-deadletter`. Failed items moved via internal actor-to-actor invocation using `IActorInvoker`.
 
 ## Future Considerations
 
