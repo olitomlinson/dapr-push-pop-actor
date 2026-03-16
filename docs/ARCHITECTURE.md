@@ -136,32 +136,37 @@ Example state for actor "my-queue" with 250 items in priority 0:
 
 ### Segment Offloading (v4.1+)
 
-**Segment Offloading** is a memory optimization that moves "middle" full segments from the actor's state manager to the external Dapr state store, further reducing memory footprint while maintaining performance.
+**Segment Offloading** is a memory optimization that unloads "middle" full segments from the actor's in-memory cache while keeping them in the permanent state store. This reduces active memory footprint while maintaining FIFO guarantees and performance.
 
 **Architecture:**
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│             Actor State Manager (Memory)                │
+│        Actor In-Memory Cache (StateManager)             │
 ├─────────────────────────────────────────────────────────┤
 │  queue_0_seg_0 (head - active)        [100 items]      │
 │  queue_0_seg_1 (buffer)               [100 items]      │
 │  queue_0_seg_49 (tail - active)       [50 items]       │
 └─────────────────────────────────────────────────────────┘
                          │
-                         │ offload/load
+                         │ unload/load (UnloadStateAsync)
                          ▼
 ┌─────────────────────────────────────────────────────────┐
-│           State Store (PostgreSQL, Redis, etc.)         │
+│    Permanent State Store (PostgreSQL, Redis, etc.)      │
 ├─────────────────────────────────────────────────────────┤
-│  offloaded_queue_0_seg_2_actor_id     [100 items]      │
-│  offloaded_queue_0_seg_3_actor_id     [100 items]      │
+│  queue_0_seg_0        [100 items]  ← Always present     │
+│  queue_0_seg_1        [100 items]  ← Always present     │
+│  queue_0_seg_2        [100 items]  ← Unloaded from cache│
+│  queue_0_seg_3        [100 items]  ← Unloaded from cache│
 │  ...                                                     │
-│  offloaded_queue_0_seg_48_actor_id    [100 items]      │
+│  queue_0_seg_48       [100 items]  ← Unloaded from cache│
+│  queue_0_seg_49       [50 items]   ← Always present     │
 └─────────────────────────────────────────────────────────┘
 
 Memory Usage: ~250 items instead of ~4,950 items (95% reduction)
 ```
+
+**Key Insight:** Segments stay at their regular keys (`queue_{priority}_seg_{segmentNum}`). The `UnloadStateAsync()` method removes them from the actor's in-memory tracking/cache but leaves them in the permanent store. Dapr automatically loads them back when accessed via `TryGetStateAsync()`.
 
 **When Segments Are Offloaded:**
 
@@ -171,37 +176,31 @@ A segment is eligible for offload when:
 3. `segment_num < tail_segment`
 
 **Configuration:**
-- `buffer_segments` (default: 1): Number of full segments to keep between head and offloaded segments
+- `buffer_segments` (default: 1): Number of full segments to keep in memory between head and offloaded segments
   - Higher values = more memory, less latency
   - Lower values = less memory, occasional load latency
-
-**Key Naming:**
-- Offloaded segments use format: `offloaded_queue_{priority}_seg_{segment_num}_{actor_id}`
-- Includes actor ID for global uniqueness in shared state store
 
 **Offload Flow** (during Push):
 1. After successful push, check if any segments are eligible
 2. For each eligible segment:
-   - Save segment to state store with offloaded key
-   - Extend offloaded range (`head_offloaded_segment`/`tail_offloaded_segment`)
-   - Remove segment from actor state manager
+   - Call `StateManager.UnloadStateAsync(segmentKey)` to unload from memory
+   - Extend offloaded range (`head_offloaded_segment`/`tail_offloaded_segment`) in metadata
 3. Continue (non-blocking on failure)
 
-**Note**: Offloaded segments are always contiguous, so they're stored as a range (min/max) rather than a list, preventing unbounded metadata growth.
+**Note**: Offloaded segments are always contiguous, so they're stored as a range (min/max) in metadata rather than a list, preventing unbounded metadata growth.
 
 **Load Flow** (during Pop):
 1. Before accessing head segment, check if any offloaded segments need loading
 2. Load segments where `segment_num <= head_segment + buffer_segments`
 3. For each segment to load:
-   - Get segment from state store
-   - Save to actor state manager
-   - Shrink offloaded range (increment `head_offloaded_segment`)
-   - Delete from state store (cleanup)
+   - Call `StateManager.TryGetStateAsync(segmentKey)` - Dapr hydrates from permanent store automatically
+   - Shrink offloaded range (increment `head_offloaded_segment`) in metadata
 
 **Benefits:**
 - **Memory**: Reduces from O(N items) to O(buffer_segments × 100)
 - **Example**: 10,000 item queue uses ~300 items in memory (97% reduction)
 - **Transparent**: No API changes - offloading happens automatically
+- **Simplicity**: Single state key namespace, no manual cleanup needed
 - **Graceful**: Failures degrade to full memory mode (non-blocking)
 
 **Trade-offs:**
@@ -473,7 +472,7 @@ metadata:
 1. **Use Descriptive Actor IDs**: `user-{userId}-tasks` not `queue-123`
 2. **Leverage Segment Offloading**: Default configuration (buffer_segments=1) provides excellent memory savings for large queues
 3. **Tune Buffer Segments**: Increase `buffer_segments` (2-5) for latency-sensitive applications
-4. **Monitor State Store**: Watch both actor state and offloaded segment storage
+4. **Monitor State Store**: Watch state store size - all segments persist there even when unloaded from memory
 5. **Pop Regularly**: While offloading handles large queues, regular consumption prevents unbounded growth
 6. **Handle Empty Queue**: Pop returns empty list, not error
 7. **Idempotent Consumers**: Operations may be retried on failure

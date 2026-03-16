@@ -249,8 +249,12 @@ static async Task<(bool success, int statusCode)> PushViaHttp(HttpClient client,
     {
         var request = new
         {
-            item = JsonSerializer.Deserialize<JsonElement>(itemJson),
-            priority
+            items = new[] {
+                new {
+                    item = JsonSerializer.Deserialize<JsonElement>(itemJson),
+                    priority
+                }
+            }
         };
 
         var response = await client.PostAsJsonAsync($"/queue/{queueId}/push", request);
@@ -271,9 +275,8 @@ static async Task<(bool success, int statusCode)> PushViaGrpc(GrpcService.DaprMQ
         var request = new PushRequest
         {
             QueueId = queueId,
-            ItemJson = itemJson,
-            Priority = priority
         };
+        request.Items.Add(new PushItem { ItemJson = itemJson, Priority = priority });
 
         var response = await client.PushAsync(request);
         // gRPC OK status = 0

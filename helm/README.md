@@ -160,13 +160,6 @@ helm install daprmq-app2 ./helm \
 - The DaprMQ application **always exposes both ports** (8080 for HTTP, 8081 for gRPC) on all nodes
 - Health checks always use port 8080 (HTTP) regardless of the protocol setting
 
-### Application Configuration
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `app.segmentDeletionRetentionSeconds` | Segment deletion retention | `0` |
-| `app.segmentCleanupScanIntervalSeconds` | Cleanup scan interval | `60` |
-
 ### Worker Configuration
 
 | Parameter | Description | Default |

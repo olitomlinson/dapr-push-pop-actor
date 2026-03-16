@@ -95,6 +95,9 @@ artifacts/
 !results/**/*.svg
 !results/**/*.webp
 
+# Custom nuget - allow custom nuget packages
+!nuget-local/*.nupkg
+
 # Node.js / Dashboard
 dashboard/node_modules/
 dashboard/dist/

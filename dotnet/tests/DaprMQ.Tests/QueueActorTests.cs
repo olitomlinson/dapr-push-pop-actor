@@ -48,17 +48,6 @@ public class QueueActorTests
                 return new ConditionalValue<Queue<string>>(false, null);
             });
 
-        // Setup TryGetStateAsync for SegmentDeletionMetadata
-        mock.Setup(m => m.TryGetStateAsync<SegmentDeletionMetadata>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string key, CancellationToken ct) =>
-            {
-                if (stateData.ContainsKey(key) && stateData[key] is SegmentDeletionMetadata deletionMetadata)
-                {
-                    return new ConditionalValue<SegmentDeletionMetadata>(true, deletionMetadata);
-                }
-                return new ConditionalValue<SegmentDeletionMetadata>(false, null);
-            });
-
         // Setup SetStateAsync
         mock.Setup(m => m.SetStateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()))
             .Returns((string key, object value, CancellationToken ct) =>

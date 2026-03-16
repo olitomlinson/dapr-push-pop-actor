@@ -106,9 +106,9 @@ As part of driving towards a more feature complete message broker, the following
 7. **Dead-letter Forwarding**: Send a HTTP notification to any endpoint when a dead-letter message has been produced. Useful for alerting Operators, and triggering automated healing routines that sit external to the system.
 8. **Priority Delete**: Delete a priority sub-queue in one operation.
 9. **Scheduled Enque**: A message can be pushed to the front of any sub-queue, at a future scheduled time.
-10. **Message revocation**: A message can be removed from the queue, regardless of its position (Requires Segment offload refactor as a pre-requisite)
-11. **Bulk Push**: Write many messages to a queue in one atomic operation.
-12. **Bulk Pop**: Pop many message from a queue in one atomic operation. (Requires Segment Offload refactor as a pre-requisite)
+10. **Message revocation**: A message can be removed from the queue, regardless of its position
+11. ~~**Bulk Push**: Write many messages to a queue in one atomic operation.~~
+12. **Bulk Pop**: Pop many message from a queue in one atomic operation.
 13. **Rate-limit**: Push and Pop operations are protected with a per queue rate-limiter.
 14. **Qoutas**: Queues are governed by Push and Pop qouates per minute/hour/day.
 15. **Queue capacity limit**: Prevent Pushes until queue length drops below a capacity limit.
@@ -116,11 +116,6 @@ As part of driving towards a more feature complete message broker, the following
 17. **Message functions**: Before a Pop is about to occur, call a HTTP endpoint with the message payload and replace message payload with the HTTP response.
 18. **Competing Consumers**: Experimental project (requires Bulk Push and Bulk Pop as a pre-requisite)
 19. **Language SDKs**: Competing Consumers would benefit from language SDKs which implement a gRPC message pump loop. This would allow the SDK to buffer messages and relay them to the applications message handler as push-based model to further increase throughput and reduce latency.
-
-
-### Performance
-
-1. **Segment Offload Refactor**: Right now, Dapr Actors can't temporarily unload state Keys from application memory. Because of this, we have to implement & maintain an entire sub-system that strategically manages offloading middle segments of a queue (middle segments are those that sit between the HEAD and TAIL segments) to storage. It's not a complicated strategy to implement & maintain, but it does add latency and complexity to the operation. Once Dapr provides a capability to temporarily unload state keys from application memory, we can vastly simplify the segment unloadings strategy, this will also remove areas of the code that requires at-least-once processing, leading to a better Developer Experience.
 
 
 ## Use Cases

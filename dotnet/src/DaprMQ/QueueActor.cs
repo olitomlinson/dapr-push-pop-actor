@@ -56,36 +56,6 @@ public record LockState
 }
 
 /// <summary>
-/// Represents a segment queued for deletion with timestamp.
-/// </summary>
-public record PendingDeletion
-{
-    /// <summary>
-    /// External segment key to delete.
-    /// Format: "offloaded_queue_{priority}_seg_{segmentNum}_{actorId}"
-    /// </summary>
-    public required string SegmentKey { get; init; }
-
-    /// <summary>
-    /// Unix timestamp (seconds) when deletion was requested.
-    /// </summary>
-    public required double RequestedAtUnixSeconds { get; init; }
-}
-
-/// <summary>
-/// Metadata tracking segments queued for deletion from external storage.
-/// Separate from ActorMetadata to isolate cleanup state.
-/// </summary>
-public record SegmentDeletionMetadata
-{
-    /// <summary>
-    /// List of pending deletions with timestamps.
-    /// Using List instead of Queue for efficient filtering by timestamp.
-    /// </summary>
-    public List<PendingDeletion> PendingDeletions { get; init; } = new();
-}
-
-/// <summary>
 /// QueueActor - A FIFO queue-based Dapr actor with priority support.
 /// Implements segmented storage (100 items per segment) for scalable queue operations.
 /// </summary>
@@ -98,49 +68,9 @@ public class QueueActor : Actor, IQueueActor
     private const int MaxLockTtlSeconds = 300;
     private const int DefaultLockTtlSeconds = 30;
     private const int LockIdLength = 11;
-    private const string OffloadSegmentCleanupTimerName = "segment-cleanup-timer";
-    private const int OffloadSegmentCleanupScanIntervalSeconds = 60;
-    private const string OffloadSegmentCleanupMetadataKey = "segment_deletion_metadata";
-    private const int OffloadSegmentRetentionSeconds = 60;
 
     private static bool IsQueueCorrupted(ActorMetadata metadata) =>
         !string.IsNullOrEmpty(metadata.ErrorMessage);
-
-    /// <summary>
-    /// Get the segment retention period in seconds from environment variable or default.
-    /// Environment variable: SEGMENT_DELETION_RETENTION_SECONDS
-    /// </summary>
-    private static int GetRetentionSeconds()
-    {
-        var envVar = Environment.GetEnvironmentVariable("SEGMENT_DELETION_RETENTION_SECONDS");
-        if (int.TryParse(envVar, out var seconds) && seconds >= 0)
-        {
-            return seconds;
-        }
-        return OffloadSegmentRetentionSeconds;
-    }
-
-    /// <summary>
-    /// Get the cleanup scan interval in seconds from environment variable or default.
-    /// Environment variable: SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS
-    /// </summary>
-    private static int GetCleanupScanIntervalSeconds()
-    {
-        var envVar = Environment.GetEnvironmentVariable("SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS");
-        if (int.TryParse(envVar, out var seconds) && seconds >= 1)
-        {
-            return seconds;
-        }
-        return OffloadSegmentCleanupScanIntervalSeconds;
-    }
-
-    /// <summary>
-    /// Get current Unix timestamp in seconds.
-    /// </summary>
-    private static double GetUnixTimestampSeconds()
-    {
-        return DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-    }
 
     public QueueActor(ActorHost host, IActorInvoker actorInvoker) : base(host)
     {
@@ -173,17 +103,6 @@ public class QueueActor : Actor, IQueueActor
         {
             Logger.LogDebug("Actor activated with existing metadata");
         }
-
-        // Register cleanup timer (not durable, must re-register on each activation)
-        var scanInterval = GetCleanupScanIntervalSeconds();
-        await RegisterTimerAsync(
-            OffloadSegmentCleanupTimerName,
-            nameof(OffloadSegmentCleanupAsync),
-            null,
-            TimeSpan.FromSeconds(scanInterval),  // Due time (first run)
-            TimeSpan.FromSeconds(scanInterval)); // Period (recurring)
-
-        Logger.LogDebug("Actor {ActorId}: Registered cleanup timer ({ScanInterval}s interval)", Id.GetId(), scanInterval);
     }
 
     /// <summary>
@@ -1277,15 +1196,6 @@ public class QueueActor : Actor, IQueueActor
     }
 
     /// <summary>
-    /// Generate state store key for offloaded segment.
-    /// Format: offloaded_queue_{priority}_seg_{segmentNum}_{actorId}
-    /// </summary>
-    private string GetOffloadedSegmentKey(int priority, int segmentNum)
-    {
-        return $"offloaded_queue_{priority}_seg_{segmentNum}_{Id.GetId()}";
-    }
-
-    /// <summary>
     /// Get offloaded segment range for a priority queue.
     /// Returns (head, tail) or (null, null) if no offloaded segments exist.
     /// </summary>
@@ -1381,30 +1291,20 @@ public class QueueActor : Actor, IQueueActor
     {
         try
         {
-            string offloadKey = GetOffloadedSegmentKey(priority, segmentNum);
+            string segmentKey = $"queue_{priority}_seg_{segmentNum}";
 
-            Logger.LogDebug($"[OFFLOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
-                $"Offloading to key '{offloadKey}'");
-
-            // Serialize segment data to UTF-8 byte array
-            byte[] segmentBytes = JsonSerializer.SerializeToUtf8Bytes(segmentData);
-
-            // Save to state store using DaprClient (raw bytes - no double serialization)
-            using var client = new DaprClientBuilder().Build();
-            await client.SaveByteStateAsync("statestore", offloadKey, segmentBytes);
+            Logger.LogDebug($"[OFFLOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}");
 
             // Add to offloaded range in metadata
             var updatedMetadata = AddOffloadedSegment(metadata, priority, segmentNum);
 
-            // Delete from actor state manager
-            string segmentKey = $"queue_{priority}_seg_{segmentNum}";
-            await StateManager.RemoveStateAsync(segmentKey);
+            // Unload from actor memory (stays in permanent store at same key)
+            await StateManager.UnloadStateAsync(segmentKey);
 
             // Save metadata (staging only - commit happens in caller)
             await SetMetadataAsync(updatedMetadata);
 
-            Logger.LogDebug($"[OFFLOAD-SUCCESS] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
-                $"Saved to external store, deleting from actor state");
+            Logger.LogDebug($"[OFFLOAD-SUCCESS] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: Unloaded from actor memory");
 
             return updatedMetadata;
         }
@@ -1416,253 +1316,53 @@ public class QueueActor : Actor, IQueueActor
         }
     }
 
+
     /// <summary>
     /// Load an offloaded segment from state store back into actor state.
-    /// Returns updated metadata if successful, null otherwise (logs error).
+    /// Returns updated metadata if successful, throws on error.
     /// </summary>
     private async Task<ActorMetadata?> LoadOffloadedSegmentAsync(int priority, int segmentNum, ActorMetadata metadata)
     {
         try
         {
-            string offloadKey = GetOffloadedSegmentKey(priority, segmentNum);
-
-            Logger.LogDebug($"[LOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
-                $"Loading from key '{offloadKey}'");
-
-            // Load segment from external state store
-            using var client = new DaprClientBuilder().Build();
-            var result = await client.GetByteStateAsync("statestore", offloadKey);
-
-            if (result.IsEmpty)
-            {
-                // Store error in metadata using record 'with' syntax
-                string errorMsg = $"CORRUPTED: Segment {segmentNum} priority {priority} missing from external store. " +
-                                  $"Offloaded range: {GetOffloadedRange(metadata, priority)}. " +
-                                  $"Actor ID: {Id.GetId()}. " +
-                                  $"Manual intervention required.";
-
-                var corruptedMetadata = metadata with { ErrorMessage = errorMsg };
-                await SetMetadataAsync(corruptedMetadata);
-                await StateManager.SaveStateAsync();  // Persist error state immediately
-
-                Logger.LogCritical($"[LOAD-MISSING] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
-                    $"Segment missing from external store! Offloaded range: {GetOffloadedRange(metadata, priority)}");
-
-                throw new InvalidOperationException(errorMsg);
-            }
-
-            // Deserialize from UTF-8 bytes
-            var segmentData = JsonSerializer.Deserialize<Queue<string>>(result.Span);
-
-            if (segmentData == null || segmentData.Count == 0)
-            {
-                // Store error in metadata using record 'with' syntax
-                string errorMsg = $"CORRUPTED: Empty data for offloaded segment {segmentNum} priority {priority}. " +
-                                  $"Offloaded range: {GetOffloadedRange(metadata, priority)}. " +
-                                  $"Actor ID: {Id.GetId()}. " +
-                                  $"Manual intervention required.";
-
-                var corruptedMetadata = metadata with { ErrorMessage = errorMsg };
-                await SetMetadataAsync(corruptedMetadata);
-                await StateManager.SaveStateAsync();  // Persist error state immediately
-
-                Logger.LogCritical($"Queue corrupted: {errorMsg}");
-                throw new InvalidOperationException(errorMsg);
-            }
-
-            // Save to actor state manager
             string segmentKey = $"queue_{priority}_seg_{segmentNum}";
-            await StateManager.SetStateAsync(segmentKey, segmentData);
+
+            Logger.LogDebug($"[LOAD-START] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}");
+
+            // Load segment from permanent store (Dapr hydrates automatically)
+            var segmentData = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
+
+            if (!segmentData.HasValue || segmentData.Value == null || segmentData.Value.Count == 0)
+            {
+                string errorMsg = $"CORRUPTED: Segment {segmentNum} priority {priority} missing or empty. " +
+                                  $"Offloaded range: {GetOffloadedRange(metadata, priority)}. " +
+                                  $"Actor ID: {Id.GetId()}. Manual intervention required.";
+
+                var corruptedMetadata = metadata with { ErrorMessage = errorMsg };
+                await SetMetadataAsync(corruptedMetadata);
+                await StateManager.SaveStateAsync();  // Persist error state immediately
+
+                Logger.LogCritical($"[LOAD-MISSING] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: {errorMsg}");
+                throw new InvalidOperationException(errorMsg);
+            }
 
             // Remove from offloaded range
             var updatedMetadata = RemoveOffloadedSegment(metadata, priority, segmentNum);
 
-            // Queue for async deletion (safer than immediate delete)
-            await QueueSegmentForDeletionAsync(offloadKey);
-
             // Save metadata (staging only - commit happens in caller)
             await SetMetadataAsync(updatedMetadata);
 
-            Logger.LogDebug($"[LOAD-SUCCESS] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: " +
-                $"Loaded {segmentData.Count} items, queued for deletion");
+            Logger.LogDebug($"[LOAD-SUCCESS] Actor {Id.GetId()}, Segment {segmentNum}, Priority {priority}: Loaded {segmentData.Value.Count} items from permanent store");
 
             return updatedMetadata;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, $"Failed to load offloaded segment {segmentNum} for priority {priority} (actor {Id.GetId()})");
-            return null;
+            throw;  // Changed from return null - loading failures should be fatal
         }
     }
 
-    /// <summary>
-    /// Queue an external segment for deletion with timestamp. Safer than immediate deletion.
-    /// The segment will be deleted by the cleanup timer after retention period elapses.
-    /// </summary>
-    private async Task QueueSegmentForDeletionAsync(string segmentKey)
-    {
-        try
-        {
-            // Load current deletion metadata
-            var deletionMetadata = await StateManager.TryGetStateAsync<SegmentDeletionMetadata>(OffloadSegmentCleanupMetadataKey);
-            var currentMetadata = deletionMetadata.HasValue
-                ? deletionMetadata.Value
-                : new SegmentDeletionMetadata();
-
-            // Check if already queued (avoid duplicates)
-            var alreadyQueued = currentMetadata.PendingDeletions.Any(pd => pd.SegmentKey == segmentKey);
-
-            if (!alreadyQueued)
-            {
-                var updatedList = new List<PendingDeletion>(currentMetadata.PendingDeletions);
-                var pendingDeletion = new PendingDeletion
-                {
-                    SegmentKey = segmentKey,
-                    RequestedAtUnixSeconds = GetUnixTimestampSeconds()
-                };
-                updatedList.Add(pendingDeletion);
-
-                var updatedMetadata = currentMetadata with { PendingDeletions = updatedList };
-                await StateManager.SetStateAsync(OffloadSegmentCleanupMetadataKey, updatedMetadata);
-
-                var retentionSeconds = GetRetentionSeconds();
-                Logger.LogDebug($"Actor {Id.GetId()}: Queued '{segmentKey}' for deletion " +
-                    $"(list size: {updatedList.Count}, retention: {retentionSeconds}s)");
-            }
-            else
-            {
-                Logger.LogDebug($"Actor {Id.GetId()}: Segment '{segmentKey}' already queued for deletion");
-            }
-
-            // Note: State will be saved by caller's SaveStateAsync
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, $"Failed to queue segment '{segmentKey}' for deletion");
-            // Don't throw - deletion queue is best-effort
-        }
-    }
-
-    /// <summary>
-    /// Actor Timer callback: Process pending segment deletions from external storage.
-    /// Runs every 60 seconds. Only deletes segments after retention period has elapsed.
-    /// Handles failures gracefully (retries transient errors, removes already-deleted segments).
-    /// </summary>
-    private async Task OffloadSegmentCleanupAsync()
-    {
-        try
-        {
-            // Load deletion metadata
-            var deletionMetadata = await StateManager.TryGetStateAsync<SegmentDeletionMetadata>(OffloadSegmentCleanupMetadataKey);
-            if (!deletionMetadata.HasValue || deletionMetadata.Value.PendingDeletions.Count == 0)
-            {
-                Logger.LogDebug($"Actor {Id.GetId()}: No pending deletions");
-                return;
-            }
-
-            var retentionSeconds = GetRetentionSeconds();
-            var currentTimestamp = GetUnixTimestampSeconds();
-
-            var pendingList = deletionMetadata.Value.PendingDeletions;
-            var originalCount = pendingList.Count;
-
-            // Separate eligible (past retention) from not ready
-            var eligibleDeletions = pendingList
-                .Where(pd => (currentTimestamp - pd.RequestedAtUnixSeconds) >= retentionSeconds)
-                .ToList();
-            var notReadyDeletions = pendingList
-                .Where(pd => (currentTimestamp - pd.RequestedAtUnixSeconds) < retentionSeconds)
-                .ToList();
-
-            var successCount = 0;
-            var alreadyDeletedCount = 0;
-            var failedCount = 0;
-            var notReadyCount = notReadyDeletions.Count;
-
-            Logger.LogInformation($"Actor {Id.GetId()}: Processing {originalCount} pending deletion(s) " +
-                $"(retention: {retentionSeconds}s, eligible: {eligibleDeletions.Count}, not ready: {notReadyCount})");
-
-            using var client = new DaprClientBuilder().Build();
-            var failedDeletions = new List<PendingDeletion>();
-
-            // Process eligible deletions
-            foreach (var pendingDeletion in eligibleDeletions)
-            {
-                var elapsedSeconds = currentTimestamp - pendingDeletion.RequestedAtUnixSeconds;
-
-                try
-                {
-                    await client.DeleteStateAsync("statestore", pendingDeletion.SegmentKey);
-                    successCount++;
-                    Logger.LogDebug($"Actor {Id.GetId()}: Deleted '{pendingDeletion.SegmentKey}' " +
-                        $"from state store (aged {elapsedSeconds:F0}s)");
-                }
-                catch (Exception ex)
-                {
-                    // Check if segment was already deleted (not found error)
-                    if (IsAlreadyDeletedError(ex))
-                    {
-                        alreadyDeletedCount++;
-                        Logger.LogDebug($"Actor {Id.GetId()}: Segment '{pendingDeletion.SegmentKey}' " +
-                            $"already deleted, removing from list");
-                        // Don't re-add - segment is gone
-                    }
-                    else
-                    {
-                        // Transient error - keep in list for retry
-                        failedCount++;
-                        failedDeletions.Add(pendingDeletion);
-                        Logger.LogWarning(ex, $"Actor {Id.GetId()}: Failed to delete '{pendingDeletion.SegmentKey}', " +
-                            $"keeping in list for retry");
-                    }
-                }
-            }
-
-            // Log not-ready segments (debug only, don't log all in production)
-            if (notReadyCount > 0 && notReadyCount <= 5)
-            {
-                foreach (var notReady in notReadyDeletions.Take(5))
-                {
-                    var elapsedSeconds = currentTimestamp - notReady.RequestedAtUnixSeconds;
-                    var remainingSeconds = retentionSeconds - elapsedSeconds;
-                    Logger.LogDebug($"Actor {Id.GetId()}: Segment '{notReady.SegmentKey}' " +
-                        $"not ready for deletion ({remainingSeconds:F0}s remaining)");
-                }
-            }
-
-            // Build updated list: not ready + failed (for retry)
-            var updatedList = new List<PendingDeletion>(notReadyDeletions.Count + failedDeletions.Count);
-            updatedList.AddRange(notReadyDeletions);
-            updatedList.AddRange(failedDeletions);
-
-            // Update deletion metadata with remaining list
-            var updatedMetadata = deletionMetadata.Value with { PendingDeletions = updatedList };
-            await StateManager.SetStateAsync(OffloadSegmentCleanupMetadataKey, updatedMetadata);
-            await StateManager.SaveStateAsync();
-
-            Logger.LogInformation($"Actor {Id.GetId()}: Cleanup complete - " +
-                $"Success: {successCount}, Already deleted: {alreadyDeletedCount}, " +
-                $"Failed: {failedCount}, Not ready: {notReadyCount}, Remaining: {updatedList.Count}");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, $"Actor {Id.GetId()}: Critical error in cleanup timer callback");
-            // Timer will retry on next interval
-        }
-    }
-
-    /// <summary>
-    /// Check if exception indicates segment was already deleted (not found).
-    /// </summary>
-    private static bool IsAlreadyDeletedError(Exception ex)
-    {
-        // Dapr returns RpcException with StatusCode.NotFound for missing keys
-        // Check exception message for "not found" or similar indicators
-        var message = ex.Message?.ToLowerInvariant() ?? string.Empty;
-        return message.Contains("not found") ||
-               message.Contains("does not exist") ||
-               message.Contains("404");
-    }
 
     /// <summary>
     /// Check and offload eligible segments for a priority queue.

@@ -265,10 +265,6 @@ docker-compose up                                     # Full stack
 - `ACTOR_TYPE_NAME` (default: `"QueueActor"`) - Dapr actor type name
 - `REGISTER_ACTORS` (default: `true`) - Set `false` for gateway instances
 
-**Queue Performance:**
-- `SEGMENT_DELETION_RETENTION_SECONDS` (default: `60`) - Cleanup retention for offloaded segments
-- `SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS` (default: `60`, min: `1`) - Cleanup scan frequency
-
 **Ports:**
 - `ASPNETCORE_URLS` (default: `http://+:5000`) - HTTP port (gRPC uses next port)
 
@@ -277,7 +273,6 @@ docker-compose up                                     # Full stack
 environment:
   - ASPNETCORE_URLS=http://+:8080
   - REGISTER_ACTORS=false
-  - SEGMENT_DELETION_RETENTION_SECONDS=120
 ```
 
 ### Lock Configuration (Constants)
@@ -642,7 +637,7 @@ The proto files are automatically generated during build from [daprmq.proto](dot
    - Lock extension (modify TTL without re-queuing)
    - FIFO guarantee (position preserved during lock)
 
-10. **Segment Offloading**: When queue grows large, older segments move to external Dapr state store. In-memory buffer keeps recent segments for fast access. Offloaded segments cleaned up after `SEGMENT_DELETION_RETENTION_SECONDS` (default 60s).
+10. **Segment Offloading**: When queue grows large, older segments are unloaded from the actor's in-memory cache using `StateManager.UnloadStateAsync()`. Segments stay at regular keys in permanent store and are automatically reloaded when needed. In-memory buffer keeps recent segments for fast access.
 
 11. **Dead Letter Queue**: DLQ is a separate actor instance with ID `{originalId}-deadletter`. Failed items moved via internal actor-to-actor invocation using `IActorInvoker`.
 

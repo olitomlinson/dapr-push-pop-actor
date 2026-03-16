@@ -137,13 +137,14 @@ queue_0_seg_9: [items 900-999]   // Last 100 items
 
 **Introduced in**: v4.1.0
 
-Segment Offloading is an additional memory optimization that moves "middle" full segments from the actor's state manager to the external Dapr state store. This reduces active memory footprint while maintaining FIFO guarantees and transparent API behavior.
+Segment Offloading is an additional memory optimization that unloads "middle" full segments from the actor's in-memory cache while keeping them in the permanent state store. This reduces active memory footprint while maintaining FIFO guarantees and transparent API behavior.
 
 **Key Benefits**:
 - **Memory Reduction**: O(N items) → O(buffer_segments × 100 items)
 - **Scalability**: Support much larger queues per actor without memory constraints
 - **Transparent**: No API changes - offloading happens automatically
 - **Configurable**: Tune memory vs latency with `buffer_segments` parameter
+- **Simplicity**: Single state key namespace, no manual cleanup needed
 
 ### How It Works
 
@@ -152,11 +153,13 @@ Only **middle segments** are offloaded - segments that are:
 2. Not being consumed (segment_num > head_segment + buffer_segments)
 3. Not being written to (segment_num < tail_segment)
 
+**Key Insight:** Segments stay at their regular keys (`queue_{priority}_seg_{segmentNum}`). The `StateManager.UnloadStateAsync()` method removes them from the actor's in-memory tracking/cache but leaves them in the permanent store. Dapr automatically loads them back when accessed via `TryGetStateAsync()`.
+
 **Example**: With `buffer_segments=1`, head=0, tail=5:
-- Segment 0: Head (active) - KEEP in actor state
-- Segment 1: Buffer - KEEP in actor state
-- Segments 2, 3, 4: Middle full segments - OFFLOAD to state store
-- Segment 5: Tail (active) - KEEP in actor state
+- Segment 0: Head (active) - KEEP in memory
+- Segment 1: Buffer - KEEP in memory
+- Segments 2, 3, 4: Middle full segments - UNLOAD from memory (stay in permanent store)
+- Segment 5: Tail (active) - KEEP in memory
 
 **Result**: Only 3 segments (~300 items) in memory instead of 6 segments (~600 items) - 50% memory reduction.
 
@@ -192,17 +195,18 @@ Add `buffer_segments` to metadata config:
 
 ### State Store Keys
 
-Offloaded segments use a predictable key naming convention including actor ID:
+All segments (loaded and unloaded) use the same key naming convention:
 
 ```
-offloaded_queue_{priority}_seg_{segment_num}_{actor_id}
+queue_{priority}_seg_{segment_num}
 ```
 
 **Example**:
-- Actor ID: `user-queue-123`
 - Priority: 0
 - Segment: 2
-- Key: `offloaded_queue_0_seg_2_user-queue-123`
+- Key: `queue_0_seg_2`
+
+**Note**: Whether a segment is in the actor's memory cache or not, it always stays at the same key in the permanent state store. The `head_offloaded_segment`/`tail_offloaded_segment` metadata tracks which segments are currently unloaded from memory.
 
 ### Offloading Lifecycle
 
@@ -215,10 +219,9 @@ offloaded_queue_{priority}_seg_{segment_num}_{actor_id}
 3. `segment_num < tail_segment`
 
 **Process**:
-1. Save segment data to state store with offloaded key
+1. Call `StateManager.UnloadStateAsync(segmentKey)` to unload from memory
 2. Extend offloaded range (`head_offloaded_segment`/`tail_offloaded_segment`) in metadata
-3. Delete segment from actor state manager
-4. Continue (non-blocking on failure)
+3. Continue (non-blocking on failure)
 
 **Note**: Offloaded segments are always contiguous, so they're stored as a range (min/max) rather than a list to prevent unbounded metadata growth.
 
@@ -228,10 +231,8 @@ offloaded_queue_{priority}_seg_{segment_num}_{actor_id}
 **Condition**: `segment_num <= head_segment + buffer_segments`
 
 **Process**:
-1. Load segment data from state store
-2. Save to actor state manager
-3. Shrink offloaded range (increment `head_offloaded_segment`)
-4. Delete from state store (cleanup)
+1. Call `StateManager.TryGetStateAsync(segmentKey)` - Dapr hydrates from permanent store automatically
+2. Shrink offloaded range (increment `head_offloaded_segment`) in metadata
 
 #### Example Flow
 
@@ -239,24 +240,24 @@ offloaded_queue_{priority}_seg_{segment_num}_{actor_id}
 
 **Initial State**:
 ```
-In Actor State:     segments 0, 1, 2, 3, 4
-In State Store:     (none)
+In Memory Cache:    segments 0, 1, 2, 3, 4
+In Permanent Store: segments 0, 1, 2, 3, 4  (always present)
 Memory Usage:       ~500 items
 ```
 
 **After Offloading** (head=0, tail=4):
 ```
-In Actor State:     segments 0, 1, 4
-In State Store:     segments 2, 3
+In Memory Cache:    segments 0, 1, 4
+In Permanent Store: segments 0, 1, 2, 3, 4  (all remain)
 Memory Usage:       ~300 items (40% reduction)
 Metadata:           head_offloaded_segment: 2, tail_offloaded_segment: 3
 ```
 
 **After Pop 100 Items** (head=1, tail=4):
 ```
-Segment 2 auto-loaded (within buffer distance)
-In Actor State:     segments 1, 2, 4
-In State Store:     segment 3
+Segment 2 auto-loaded into memory (within buffer distance)
+In Memory Cache:    segments 1, 2, 4
+In Permanent Store: segments 0, 1, 2, 3, 4  (all remain)
 Memory Usage:       ~300 items
 Metadata:           head_offloaded_segment: 3, tail_offloaded_segment: 3
 ```
@@ -300,18 +301,19 @@ Memory = (head_segment + buffer_segments + 1) × segment_size + tail_segment_ite
 
 **Philosophy**: Offloading is an optimization, not a requirement. Failures degrade gracefully.
 
-**Offload Failure**:
+**Offload Failure** (UnloadStateAsync fails):
 - Log warning
-- Keep segment in actor state (no memory savings this cycle)
+- Keep segment in memory cache (no memory savings this cycle)
 - Continue push operation successfully
-- State store unavailable → full memory mode
+- Dapr unavailable → full memory mode
 
-**Load Failure**:
-- Log error
-- Attempt to continue with existing state
-- May affect pop operation if segment truly needed
+**Load Failure** (TryGetStateAsync fails or returns no data):
+- Log critical error
+- Throw exception to prevent data corruption
+- Indicates potential state corruption - segment expected but missing
+- Requires manual investigation
 
-**Never Blocks**: Push/Pop operations always complete, regardless of offload/load success.
+**Never Blocks Push Operations**: Push operations always complete, regardless of offload success.
 
 ### Monitoring
 
@@ -324,22 +326,21 @@ Memory = (head_segment + buffer_segments + 1) × segment_size + tail_segment_ite
 
 **Logging**:
 ```
-INFO: Offloaded segment 2 for priority 0 to state store (actor user-queue-123)
-INFO: Loaded segment 2 for priority 0 from state store (actor user-queue-123)
-WARNING: Failed to offload segment 3 for priority 0 (actor user-queue-123): connection timeout
+DEBUG: [OFFLOAD-SUCCESS] Actor user-queue-123, Segment 2, Priority 0: Unloaded from actor memory
+DEBUG: [LOAD-SUCCESS] Actor user-queue-123, Segment 2, Priority 0: Loaded 100 items from permanent store
+WARNING: [OFFLOAD-FAILED] Actor user-queue-123, Segment 3, Priority 0: Failed to offload - connection timeout
 ```
 
 ### Implementation Details
 
 **Helper Methods**:
 ```csharp
-_get_offloaded_segment_key(priority, segment_num)           # Generate state store key
-_get_buffer_segments(metadata)                              # Get configured buffer size
-_get_offloaded_range(metadata, priority)                    # Get offloaded range (head, tail)
-_offload_segment(priority, segment_num, segment_data)       # Move to state store
-_load_offloaded_segment(priority, segment_num)              # Load from state store
-_check_and_offload_segments(priority, metadata)             # Check eligibility, offload
-_check_and_load_segments(priority, metadata)                # Check buffer, load
+GetBufferSegments(metadata)                                 # Get configured buffer size
+GetOffloadedRange(metadata, priority)                       # Get offloaded range (head, tail)
+OffloadSegmentAsync(priority, segment_num, segment_data)    # Unload from memory
+LoadOffloadedSegmentAsync(priority, segment_num)            # Load back into memory
+CheckAndOffloadSegmentsAsync(priority, metadata)            # Check eligibility, offload
+CheckAndLoadSegmentsAsync(priority, metadata)               # Check buffer, load
 ```
 
 **Integration Points**:

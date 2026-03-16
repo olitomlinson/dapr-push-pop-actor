@@ -56,10 +56,6 @@ spec:
           value: "true"
         - name: ACTOR_TYPE_NAME
           value: "{{ .Release.Name }}-daprmq-QueueActor"
-        - name: SEGMENT_DELETION_RETENTION_SECONDS
-          value: {{ .Values.app.segmentDeletionRetentionSeconds | quote }}
-        - name: SEGMENT_CLEANUP_SCAN_INTERVAL_SECONDS
-          value: {{ .Values.app.segmentCleanupScanIntervalSeconds | quote }}
         livenessProbe:
           {{- toYaml .Values.worker.livenessProbe | nindent 10 }}
         readinessProbe:

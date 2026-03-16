@@ -28,14 +28,6 @@ dapr:
   # No default value - must be explicitly set during installation
   stateStoreName: ""
 
-# Application configuration
-app:
-  # Segment deletion retention in seconds (0 = immediate deletion)
-  segmentDeletionRetentionSeconds: 0
-
-  # Segment cleanup scan interval in seconds
-  segmentCleanupScanIntervalSeconds: 60
-
 # Worker configuration (REGISTER_ACTORS=true)
 worker:
   enabled: true

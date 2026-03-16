@@ -71,7 +71,6 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr:3502
       - REGISTER_ACTORS=true
-      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8000:8080" # REST HTTP/1.1
       - "8100:8081" # gRPC HTTP/2
@@ -91,7 +90,6 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr-2:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-2:3502
       - REGISTER_ACTORS=true
-      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8001:8080" # REST HTTP/1.1
       - "8101:8081" # gRPC HTTP/2
@@ -111,7 +109,6 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr-3:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-3:3502
       - REGISTER_ACTORS=false
-      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8002:8080" # REST HTTP/1.1
       - "8102:8081" # gRPC HTTP/2
@@ -131,7 +128,6 @@ services:
       - DAPR_GRPC_ENDPOINT=http://dotnet-api-server-dapr-4:50003
       - DAPR_HTTP_ENDPOINT=http://dotnet-api-server-dapr-4:3502
       - REGISTER_ACTORS=true
-      - SEGMENT_DELETION_RETENTION_SECONDS=${SEGMENT_DELETION_RETENTION_SECONDS}
     ports:
       - "8003:8080" # REST HTTP/1.1
       - "8103:8081" # gRPC HTTP/2
