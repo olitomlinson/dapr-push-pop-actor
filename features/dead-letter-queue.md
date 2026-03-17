@@ -83,7 +83,7 @@ public record DeadLetterResponse
     public required string Status { get; init; }        // "SUCCESS" or "ERROR"
     public string? ErrorCode { get; init; }             // Error code if Status="ERROR"
     public string? Message { get; init; }               // Human-readable message
-    public string? DlqActorId { get; init; }            // DLQ actor ID if Status="SUCCESS"
+    public string? DlqId { get; init; }                 // DLQ ID if Status="SUCCESS"
 }
 ```
 
@@ -214,7 +214,7 @@ if (popResult.ItemJson != null)
             {
                 // Max retries exceeded - move to DLQ
                 var dlqResult = await actor.DeadLetter(new DeadLetterRequest { LockId = lockId });
-                Console.WriteLine($"Moved to DLQ: {dlqResult.DlqActorId}");
+                Console.WriteLine($"Moved to DLQ: {dlqResult.DlqId}");
             }
             else
             {

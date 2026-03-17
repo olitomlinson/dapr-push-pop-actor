@@ -18,6 +18,7 @@ public class DaprTestEnvironment : IAsyncLifetime
     private INetwork? _network;
     private PostgreSqlContainer? _postgresContainer;
     private IContainer? _daprPlacementContainer;
+    private IContainer? _daprSchedulerContainer;
     private IContainer? _daprSidecarContainer;
     private IContainer? _apiServerContainer;
 
@@ -31,6 +32,9 @@ public class DaprTestEnvironment : IAsyncLifetime
     // HTTP clients for testing
     public HttpClient ApiClient { get; private set; } = null!;
     public HttpClient DaprSidecarClient { get; private set; } = null!;
+
+    private string _schedulerTestDirectory;
+
 
     public async Task InitializeAsync()
     {
@@ -59,7 +63,7 @@ public class DaprTestEnvironment : IAsyncLifetime
 
         // 2. Start Dapr placement service
         _daprPlacementContainer = new ContainerBuilder()
-            .WithImage("daprio/dapr:1.17.0")
+            .WithImage("daprio/dapr:1.17.2-rc.2")
             .WithNetwork(_network)
             .WithNetworkAliases("dapr-placement")
             .WithCommand("./placement", "-port", "50005")
@@ -71,7 +75,24 @@ public class DaprTestEnvironment : IAsyncLifetime
         // Wait a bit for placement to be ready
         await Task.Delay(TimeSpan.FromSeconds(2));
 
-        // 3. Start API server container WITHOUT wait strategy (will be ready after Dapr starts)
+        const string schedulerContainerDataDir = "/data/dapr-scheduler";
+        _schedulerTestDirectory = TestDirectoryManager.CreateTestDirectory("scheduler");
+        // 3. Start Dapr scheduler service
+        _daprSchedulerContainer = new ContainerBuilder()
+            .WithImage("daprio/dapr:1.17.2-rc.2")
+            .WithNetwork(_network)
+            .WithNetworkAliases("dapr-scheduler")
+            .WithBindMount(_schedulerTestDirectory, schedulerContainerDataDir, AccessMode.ReadWrite)
+            .WithCommand("./scheduler", "--port", "50006", "--log-level", "info", "--etcd-data-dir", schedulerContainerDataDir)
+            .WithPortBinding(50006, true)
+            .Build();
+
+        await _daprSchedulerContainer.StartAsync();
+
+        // Wait a bit for scheduler to be ready
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // 4. Start API server container WITHOUT wait strategy (will be ready after Dapr starts)
         var apiServerBuilder = new ContainerBuilder()
             .WithImage("daprmq-api:test")
             .WithNetwork(_network)
@@ -109,13 +130,13 @@ public class DaprTestEnvironment : IAsyncLifetime
         // Give API server a moment to start listening
         await Task.Delay(TimeSpan.FromSeconds(2));
 
-        // 4. Start Dapr sidecar (connects to API server via Docker network)
+        // 5. Start Dapr sidecar (connects to API server via Docker network)
         // Mount the components directory from project root (3 levels up from bin/Debug/net10.0)
         var testProjectRoot = Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..");
         var componentsPath = Path.GetFullPath(Path.Combine(testProjectRoot, "dapr-components"));
 
         var daprSidecarBuilder = new ContainerBuilder()
-            .WithImage("daprio/daprd:1.17.0")
+            .WithImage("daprio/daprd:1.17.2-rc.2")
             .WithNetwork(_network)
             .WithNetworkAliases("dapr-sidecar")
             .WithCommand("./daprd",
@@ -125,6 +146,7 @@ public class DaprTestEnvironment : IAsyncLifetime
                 "--dapr-http-port", "3500",
                 "--dapr-grpc-port", "50001",
                 "--placement-host-address", "dapr-placement:50005",
+                "--scheduler-host-address", "dapr-scheduler:50006",
                 "--resources-path", "/tmp/dapr-components",
                 "--log-level", "info")  // Enable debug logging for Dapr
             .WithBindMount(componentsPath, "/tmp/dapr-components")
@@ -173,6 +195,12 @@ public class DaprTestEnvironment : IAsyncLifetime
         if (_daprPlacementContainer != null)
         {
             await _daprPlacementContainer.DisposeAsync();
+        }
+
+        if (_daprSchedulerContainer != null)
+        {
+            TestDirectoryManager.CleanUpDirectory(_schedulerTestDirectory);
+            await _daprSchedulerContainer.DisposeAsync();
         }
 
         if (_postgresContainer != null)

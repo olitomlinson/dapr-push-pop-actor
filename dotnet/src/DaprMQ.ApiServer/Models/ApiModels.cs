@@ -29,17 +29,25 @@ public record ApiPushResponse(
 );
 
 public record ApiPopResponse(
+    List<ApiPopItem> Items
+);
+
+public record ApiPopItem(
     object Item,
-    int? Priority = null
+    int Priority
 );
 
 public record ApiPopWithAckResponse(
-    object Item,
+    List<ApiPopWithAckItem> Items,
     bool Locked,
-    string? LockId,
-    double? LockExpiresAt,
-    string? Message,
-    int? Priority = null
+    string? Message = null
+);
+
+public record ApiPopWithAckItem(
+    object Item,
+    int Priority,
+    string LockId,
+    double LockExpiresAt
 );
 
 public record ApiAcknowledgeResponse(
@@ -72,5 +80,5 @@ public record ApiDeadLetterResponse(
     bool Success,
     string Message,
     string? ErrorCode = null,
-    string? DlqActorId = null
+    string? DlqId = null
 );

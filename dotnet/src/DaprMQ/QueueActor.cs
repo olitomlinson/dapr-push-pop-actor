@@ -44,7 +44,7 @@ public record QueueMetadata
 
 /// <summary>
 /// Lock state for PopWithAck operations.
-/// Tracks position of locked item instead of storing the item data.
+/// Stores the dequeued item data along with lock metadata.
 /// </summary>
 public record LockState
 {
@@ -52,14 +52,16 @@ public record LockState
     public required double CreatedAt { get; init; }
     public required double ExpiresAt { get; init; }
     public required int Priority { get; init; }
-    public required int HeadSegment { get; init; }
+    public required int HeadSegment { get; init; }  // Kept for debugging/backward compat
+    public required string ItemJson { get; init; }  // Stores dequeued item
+    public required bool CompetingConsumerMode { get; init; }  // Whether competing consumers are enabled for this lock
 }
 
 /// <summary>
 /// QueueActor - A FIFO queue-based Dapr actor with priority support.
 /// Implements segmented storage (100 items per segment) for scalable queue operations.
 /// </summary>
-public class QueueActor : Actor, IQueueActor
+public class QueueActor : Actor, IQueueActor, IRemindable
 {
     private readonly IActorInvoker _actorInvoker;
 
@@ -312,11 +314,10 @@ public class QueueActor : Actor, IQueueActor
     }
 
     /// <summary>
-    /// Pop a single item from the queue (FIFO, lowest priority first).
+    /// Pop one or more items from the queue (FIFO, lowest priority first).
     /// </summary>
-    public async Task<PopResponse> Pop()
+    public async Task<PopResponse> Pop(PopRequest request)
     {
-
         var metadata = await GetMetadataAsync();
 
         // Check for corrupted state
@@ -325,51 +326,118 @@ public class QueueActor : Actor, IQueueActor
             throw new InvalidOperationException($"Queue corrupted: {metadata.ErrorMessage}");
         }
 
-        var (response, priority) = await PopWithPriorityAsync();
-        await StateManager.SaveStateAsync();  // Commit the staged changes atomically
-        return response with { Priority = priority };
+        // Validate count parameter
+        if (request.Count < 0 || request.Count > 100)
+        {
+            return new PopResponse
+            {
+                Items = new List<PopItem>(),
+                IsEmpty = false,
+                Locked = false,
+                Message = "Count must be between 0 and 100"
+            };
+        }
+
+        var items = new List<PopItem>();
+
+        // Pop up to Count items
+        for (int i = 0; i < request.Count; i++)
+        {
+            var (response, priority, itemJson) = await PopWithPriorityAsync();
+
+            // If locked, return what we have so far with lock info
+            if (response.Locked)
+            {
+                await StateManager.SaveStateAsync();
+                return new PopResponse
+                {
+                    Items = items,
+                    Locked = true,
+                    IsEmpty = false,
+                    Message = response.Message,
+                    LockExpiresAt = response.LockExpiresAt
+                };
+            }
+
+            // If empty, return what we have so far
+            if (response.IsEmpty)
+            {
+                await StateManager.SaveStateAsync();
+                return new PopResponse
+                {
+                    Items = items,
+                    Locked = false,
+                    IsEmpty = items.Count == 0  // Only mark empty if we didn't pop anything
+                };
+            }
+
+            // Add the popped item
+            items.Add(new PopItem
+            {
+                ItemJson = itemJson!,
+                Priority = priority
+            });
+        }
+
+        // Commit all changes atomically
+        await StateManager.SaveStateAsync();
+
+        return new PopResponse
+        {
+            Items = items,
+            Locked = false,
+            IsEmpty = false
+        };
     }
 
     /// <summary>
-    /// Internal Pop method that returns both the response and the priority from which the item was popped.
+    /// Internal Pop method that returns item JSON, priority, and response metadata.
     /// This is used by PopWithAck to track the original priority for expired lock restoration.
+    /// Returns a tuple where:
+    /// - response: Contains only metadata (Locked, IsEmpty, Message, LockExpiresAt)
+    /// - priority: The priority level the item was popped from
+    /// - itemJson: The JSON string of the popped item (null if none)
     /// </summary>
-    private async Task<(PopResponse response, int priority)> PopWithPriorityAsync()
+    /// <param name="skipLockCheck">If true, skip the lock check (used for competing consumers)</param>
+    private async Task<(PopResponse response, int priority, string? itemJson)> PopWithPriorityAsync(bool skipLockCheck = false)
     {
 
         var metadata = await GetMetadataAsync();
 
         try
         {
-            // Check if queue is locked
-            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
-            if (lockState.HasValue)
+            // Check if queue is locked (any active lock blocks Pop)
+            if (!skipLockCheck)
             {
-                var lockData = lockState.Value;
-                double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-                if (now < lockData.ExpiresAt)
+                var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
+                if (lockRegistry.HasValue && lockRegistry.Value.Count > 0)
                 {
-                    Logger.LogDebug("Queue is locked, cannot pop");
-                    return (new PopResponse
+                    // Find any valid lock to report
+                    foreach (var existingLockId in lockRegistry.Value)
                     {
-                        ItemJson = null,
-                        Locked = true,
-                        IsEmpty = false,
-                        Message = "Queue is locked by another operation",
-                        LockExpiresAt = lockData.ExpiresAt
-                    }, -1);
-                }
-                else
-                {
-                    // Lock expired - return items and clear lock
-                    await HandleExpiredLockAsync(lockData);
+                        var lockState = await StateManager.TryGetStateAsync<LockState>($"{existingLockId}-lock");
+                        if (lockState.HasValue)
+                        {
+                            Logger.LogDebug("Queue is locked, cannot pop");
+                            return (new PopResponse
+                            {
+                                Locked = true,
+                                IsEmpty = false,
+                                Message = "Queue is locked by another operation",
+                                LockExpiresAt = lockState.Value.ExpiresAt
+                            }, -1, null);
+                        }
+                    }
+
+                    // If we get here, all locks in registry are orphaned - clean up
+                    await StateManager.SetStateAsync("_lock_registry", new List<string>());
+                    await StateManager.SaveStateAsync();
                 }
             }
 
             if (metadata.Queues.Count == 0)
             {
-                return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1);
+                return (new PopResponse { Locked = false, IsEmpty = true }, -1, null);
             }
 
             // Find lowest priority with items
@@ -438,7 +506,7 @@ public class QueueActor : Actor, IQueueActor
                         Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                         // Return item JSON string directly with priority
-                        return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority);
+                        return (new PopResponse { Locked = false, IsEmpty = false }, priority, itemJson);
                     }
                     else
                     {
@@ -454,7 +522,7 @@ public class QueueActor : Actor, IQueueActor
                         Logger.LogDebug($"Popped last item from priority {priority}, queue now empty");
 
                         // Return item JSON string directly with priority
-                        return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority);
+                        return (new PopResponse { Locked = false, IsEmpty = false }, priority, itemJson);
                     }
                 }
                 else
@@ -474,11 +542,11 @@ public class QueueActor : Actor, IQueueActor
                     Logger.LogDebug($"Popped item from priority {priority}, count now {count}");
 
                     // Return item JSON string directly with priority
-                    return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority);
+                    return (new PopResponse { Locked = false, IsEmpty = false }, priority, itemJson);
                 }
             }
 
-            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1);
+            return (new PopResponse { Locked = false, IsEmpty = true }, -1, null);
         }
         catch (InvalidOperationException)
         {
@@ -488,7 +556,7 @@ public class QueueActor : Actor, IQueueActor
         catch (Exception ex)
         {
             Logger.LogError(ex, "Error in PopAsync");
-            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1);
+            return (new PopResponse { Locked = false, IsEmpty = true }, -1, null);
         }
     }
 
@@ -507,99 +575,86 @@ public class QueueActor : Actor, IQueueActor
     }
 
     /// <summary>
-    /// Handles expired lock by removing it from state.
-    /// Stages the lock removal but does NOT commit - caller must call SaveStateAsync().
+    /// Reminder callback for auto-expiring locks.
+    /// Implements IRemindable interface.
     /// </summary>
-    private async Task HandleExpiredLockAsync(LockState lockData)
-    {
-        // Lock expired - items remain at front of queue automatically (lock-in-place architecture)
-        Logger.LogDebug($"Lock {lockData.LockId} expired, items remain at front of queue");
-        await StateManager.RemoveStateAsync("_active_lock");
-        // Note: SaveStateAsync() NOT called - staged change committed by caller
-    }
-
-    /// <summary>
-    /// Internal Peek method that returns items without dequeuing, along with their priority and segment.
-    /// Used by PopWithAck to implement lock-in-place architecture.
-    /// </summary>
-    private async Task<(PopResponse response, int priority, int headSegment)> PeekWithPriorityAsync()
+    public async Task ReceiveReminderAsync(string reminderName, byte[] state, TimeSpan dueTime, TimeSpan period)
     {
         try
         {
-            // Check if queue is locked
-            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
-            if (lockState.HasValue)
+            if (reminderName.StartsWith("lock-"))
             {
-                var lockData = lockState.Value;
-                double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                string lockId = reminderName[5..];
+                Logger.LogDebug("Reminder fired for lock {LockId}, re-queueing item", lockId);
 
-                if (now < lockData.ExpiresAt)
+                // Retrieve lock state to get item and priority
+                var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
+
+                if (lockState.HasValue)
                 {
-                    Logger.LogDebug("Queue is locked, cannot peek");
-                    return (new PopResponse
+                    // Re-queue the item at original priority
+                    try
                     {
-                        ItemJson = null,
-                        Locked = true,
-                        IsEmpty = false,
-                        Message = "Queue is locked by another operation",
-                        LockExpiresAt = lockData.ExpiresAt
-                    }, -1, -1);
+                        var pushRequest = new PushRequest
+                        {
+                            Items = new List<PushItem>
+                            {
+                                new PushItem
+                                {
+                                    ItemJson = lockState.Value.ItemJson,
+                                    Priority = lockState.Value.Priority
+                                }
+                            }
+                        };
+
+                        var pushResponse = await Push(pushRequest);
+
+                        if (!pushResponse.Success)
+                        {
+                            Logger.LogError(
+                                "Failed to re-queue expired lock {LockId}: {ErrorMessage}. Item: {ItemJson}",
+                                lockId,
+                                pushResponse.ErrorMessage,
+                                lockState.Value.ItemJson);
+                            // Keep lock state - don't clean up on push failure
+                            return;
+                        }
+
+                        Logger.LogInformation(
+                            "Re-queued expired lock {LockId} at priority {Priority}",
+                            lockId,
+                            lockState.Value.Priority);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex,
+                            "Exception re-queueing expired lock {LockId}. Item: {ItemJson}",
+                            lockId,
+                            lockState.Value.ItemJson);
+                        // Keep lock state - don't clean up on exception
+                        return;
+                    }
                 }
-                else
+
+                // Remove lock state and update registry (only after successful re-queue or if lock doesn't exist)
+                await StateManager.RemoveStateAsync($"{lockId}-lock");
+
+                // Remove from registry
+                var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
+                if (lockRegistry.HasValue)
                 {
-                    // Lock expired - return items and clear lock
-                    await HandleExpiredLockAsync(lockData);
-                }
-            }
-
-            var metadata = await GetMetadataAsync();
-
-            if (metadata.Queues.Count == 0)
-            {
-                return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1, -1);
-            }
-
-            // Find lowest priority with items
-            var sortedPriorities = metadata.Queues.Keys.OrderBy(p => p).ToList();
-
-            foreach (var priority in sortedPriorities)
-            {
-                // Load any offloaded segments that are needed
-                metadata = await CheckAndLoadSegmentsAsync(priority, metadata);
-
-                var queueMeta = metadata.Queues[priority];
-
-                if (queueMeta.Count == 0) continue;
-
-                int headSegment = queueMeta.HeadSegment;
-
-                // Get head segment
-                string segmentKey = $"queue_{priority}_seg_{headSegment}";
-                var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
-
-                if (!segment.HasValue || segment.Value.Count == 0)
-                {
-                    // Defensive: skip empty segment
-                    Logger.LogWarning($"Count desync detected for priority {priority}, skipping");
-                    continue;
+                    var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
+                    await StateManager.SetStateAsync("_lock_registry", registry);
                 }
 
-                // Peek single item from front (don't dequeue)
-                var segmentQueue = segment.Value;
-                var itemJson = segmentQueue.Peek();
+                await StateManager.SaveStateAsync();
 
-                Logger.LogDebug($"Peeked item from priority {priority}, segment {headSegment}");
-
-                // Return item JSON string directly with priority and segment
-                return (new PopResponse { ItemJson = itemJson, Locked = false, IsEmpty = false }, priority, headSegment);
+                Logger.LogDebug("Lock {LockId} auto-expired and cleaned up", lockId);
             }
-
-            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1, -1);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error in PeekWithPriorityAsync");
-            return (new PopResponse { ItemJson = null, Locked = false, IsEmpty = true }, -1, -1);
+            Logger.LogError(ex, "Error in ReceiveReminderAsync for reminder {ReminderName}", reminderName);
         }
     }
 
@@ -623,33 +678,111 @@ public class QueueActor : Actor, IQueueActor
             // Get TTL (default 30, clamped to 1-300)
             int ttlSeconds = Math.Max(MinLockTtlSeconds, Math.Min(MaxLockTtlSeconds, request.TtlSeconds));
 
-            // Check if already locked
-            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
-            if (lockState.HasValue)
-            {
-                var existingLock = lockState.Value;
-                double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            // Get count (default 1, clamped to 1-100)
+            int count = Math.Max(1, Math.Min(100, request.Count));
 
-                if (now < existingLock.ExpiresAt)
+            // Get lock registry
+            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
+
+            // Get or initialize registry
+            var registry = lockRegistry.HasValue ? lockRegistry.Value : new List<string>();
+
+            // Clean up orphaned registry entries (lock ID in registry but no lock state)
+            var validLocks = new List<string>();
+            foreach (var existingLockId in registry)
+            {
+                var lockState = await StateManager.TryGetStateAsync<LockState>($"{existingLockId}-lock");
+                if (lockState.HasValue)
                 {
-                    return new PopWithAckResponse
-                    {
-                        Locked = true,
-                        LockExpiresAt = existingLock.ExpiresAt,
-                        Message = "Queue is locked by another operation"
-                    };
-                }
-                else
-                {
-                    // Expired lock - return items first
-                    await HandleExpiredLockAsync(existingLock);
+                    validLocks.Add(existingLockId);
                 }
             }
+            if (validLocks.Count != registry.Count)
+            {
+                Logger.LogDebug("Cleaned up {Count} orphaned lock registry entries", registry.Count - validLocks.Count);
+                registry = validLocks;
+                await StateManager.SetStateAsync("_lock_registry", registry);
+                await StateManager.SaveStateAsync();
+            }
 
-            // Peek items (don't dequeue) and track priority and position
-            var (peekResult, priority, headSegment) = await PeekWithPriorityAsync();
+            // Legacy mode: block if ANY lock exists
+            if (!request.AllowCompetingConsumers && registry.Count > 0)
+            {
+                // Find the earliest expiring lock to report
+                double? earliestExpiry = null;
+                foreach (var existingLockId in registry)
+                {
+                    var lockState = await StateManager.TryGetStateAsync<LockState>($"{existingLockId}-lock");
+                    if (lockState.HasValue)
+                    {
+                        if (!earliestExpiry.HasValue || lockState.Value.ExpiresAt < earliestExpiry.Value)
+                        {
+                            earliestExpiry = lockState.Value.ExpiresAt;
+                        }
+                    }
+                }
 
-            if (peekResult.ItemJson == null)
+                return new PopWithAckResponse
+                {
+                    Locked = true,
+                    Message = "Queue is locked by another operation"
+                };
+            }
+
+            // Competing consumer mode: proceed regardless of existing locks
+
+            // Pop multiple items and create locks
+            var lockedItems = new List<PopWithAckItem>();
+            var newLockIds = new List<string>();
+            double nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            double lockExpiresAt = nowUnix + ttlSeconds;
+
+            for (int i = 0; i < count; i++)
+            {
+                // Dequeue item (removes from queue) and store in lock
+                // Skip lock check to allow parallel locks
+                var (popResult, priority, itemJson) = await PopWithPriorityAsync(skipLockCheck: true);
+
+                // If queue is empty, return partial results
+                if (itemJson == null)
+                {
+                    break;
+                }
+
+                // Create lock (stores dequeued item data)
+                string lockId = GenerateLockId();
+
+                var lockData = new LockState
+                {
+                    LockId = lockId,
+                    CreatedAt = nowUnix,
+                    ExpiresAt = lockExpiresAt,
+                    Priority = priority,
+                    HeadSegment = 0,  // No longer used but kept for backward compat
+                    ItemJson = itemJson!,
+                    CompetingConsumerMode = request.AllowCompetingConsumers
+                };
+
+                await StateManager.SetStateAsync($"{lockId}-lock", lockData);
+
+                // Add to registry
+                registry.Add(lockId);
+                newLockIds.Add(lockId);
+
+                // Add to response items
+                lockedItems.Add(new PopWithAckItem
+                {
+                    ItemJson = itemJson,
+                    Priority = priority,
+                    LockId = lockId,
+                    LockExpiresAt = lockExpiresAt
+                });
+
+                Logger.LogDebug("Created lock {LockId} ({Index}/{Count}) with TTL {TtlSeconds}s", lockId, i + 1, count, ttlSeconds);
+            }
+
+            // Check if we got any items
+            if (lockedItems.Count == 0)
             {
                 return new PopWithAckResponse
                 {
@@ -659,34 +792,37 @@ public class QueueActor : Actor, IQueueActor
                 };
             }
 
-            // Create lock (tracks position, not item data)
-            string lockId = GenerateLockId();
-            double nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            double lockExpiresAt = nowUnix + ttlSeconds;
-
-            var lockData = new LockState
-            {
-                LockId = lockId,
-                CreatedAt = nowUnix,
-                ExpiresAt = lockExpiresAt,
-                Priority = priority,
-                HeadSegment = headSegment
-            };
-
-            await StateManager.SetStateAsync("_active_lock", lockData);
+            // Save all state atomically
+            await StateManager.SetStateAsync("_lock_registry", registry);
             await StateManager.SaveStateAsync();
 
-            Logger.LogDebug($"Created lock {lockId} with TTL {ttlSeconds}s, expires at {lockExpiresAt}");
+            // Register reminders for auto-expiry (gracefully degrades if scheduler unavailable)
+            foreach (var lockId in newLockIds)
+            {
+                try
+                {
+                    await RegisterReminderAsync(
+                        $"lock-{lockId}",
+                        null,
+                        TimeSpan.FromSeconds(ttlSeconds),
+                        TimeSpan.FromMilliseconds(-1)); // -1 means fire once
+                    Logger.LogDebug("Registered reminder for lock {LockId} with TTL {TtlSeconds}s", lockId, ttlSeconds);
+                }
+                catch (Exception ex)
+                {
+                    // Scheduler service not available - lock expiry will rely on manual checks
+                    Logger.LogDebug(ex, "Reminder registration failed for lock {LockId} (scheduler unavailable)", lockId);
+                }
+            }
+
+            Logger.LogInformation("Created {Count} locks with TTL {TtlSeconds}s, expires at {LockExpiresAt}", lockedItems.Count, ttlSeconds, lockExpiresAt);
 
             return new PopWithAckResponse
             {
-                ItemJson = peekResult.ItemJson,
-                Priority = priority,
-                Locked = true,
+                Items = lockedItems,
+                Locked = false,
                 IsEmpty = false,
-                LockId = lockId,
-                LockExpiresAt = lockExpiresAt,
-                Message = $"Item locked with ID {lockId}"
+                Message = $"Locked {lockedItems.Count} item(s)"
             };
         }
         catch (Exception ex)
@@ -694,7 +830,6 @@ public class QueueActor : Actor, IQueueActor
             Logger.LogError(ex, "Error in PopWithAckAsync");
             return new PopWithAckResponse
             {
-                ItemJson = null,
                 Locked = false,
                 IsEmpty = true,
                 Message = $"Error: {ex.Message}"
@@ -722,144 +857,54 @@ public class QueueActor : Actor, IQueueActor
 
             string lockId = request.LockId;
 
-            // Get lock state
-            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
-            if (!lockState.HasValue)
+            // Get lock registry
+            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
+            if (!lockRegistry.HasValue || !lockRegistry.Value.Contains(lockId))
             {
                 return new AcknowledgeResponse
                 {
                     Success = false,
-                    Message = "Lock not found",
+                    Message = "Lock not found in registry",
                     ErrorCode = "LOCK_NOT_FOUND"
                 };
             }
 
-            var lockData = lockState.Value;
-
-            // Validate lock ID matches
-            if (lockData.LockId != lockId)
+            // Get lock state
+            var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
+            if (!lockState.HasValue)
             {
-                return new AcknowledgeResponse
-                {
-                    Success = false,
-                    Message = "Invalid lock_id",
-                    ErrorCode = "INVALID_LOCK_ID"
-                };
-            }
-
-            // Check if lock expired
-            double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-
-            if (now >= lockData.ExpiresAt)
-            {
-                // Lock expired - return items to queue
-                await HandleExpiredLockAsync(lockData);
+                // Lock ID in registry but lock state doesn't exist - clean up
+                var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
+                await StateManager.SetStateAsync("_lock_registry", registry);
                 await StateManager.SaveStateAsync();
 
                 return new AcknowledgeResponse
                 {
                     Success = false,
-                    Message = "Lock has expired",
-                    ErrorCode = "LOCK_EXPIRED"
+                    Message = "Lock state not found",
+                    ErrorCode = "LOCK_NOT_FOUND"
                 };
             }
 
-            // Acknowledge - now dequeue the locked item (lock-in-place architecture)
-            var metadata = await GetMetadataAsync();
+            // Note: Item already dequeued during PopWithAck - just remove lock state
+            // Remove lock and update registry
+            await StateManager.RemoveStateAsync($"{lockId}-lock");
 
-            if (!metadata.Queues.TryGetValue(lockData.Priority, out var queueMeta))
-            {
-                // Priority queue no longer exists - clear lock and return error
-                await StateManager.RemoveStateAsync("_active_lock");
-                await StateManager.SaveStateAsync();
-
-                return new AcknowledgeResponse
-                {
-                    Success = false,
-                    Message = "Priority queue no longer exists",
-                    ErrorCode = "QUEUE_NOT_FOUND"
-                };
-            }
-
-            string segmentKey = $"queue_{lockData.Priority}_seg_{lockData.HeadSegment}";
-            var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
-
-            if (!segment.HasValue || segment.Value.Count == 0)
-            {
-                // Segment no longer exists or is empty - clear lock and return error
-                await StateManager.RemoveStateAsync("_active_lock");
-                await StateManager.SaveStateAsync();
-
-                return new AcknowledgeResponse
-                {
-                    Success = false,
-                    Message = "Locked item no longer exists in queue",
-                    ErrorCode = "ITEM_NOT_FOUND"
-                };
-            }
-
-            // Dequeue the single locked item
-            var segmentQueue = segment.Value;
-            segmentQueue.Dequeue();
-
-            int headSegment = queueMeta.HeadSegment;
-            int tailSegment = queueMeta.TailSegment;
-            int count = queueMeta.Count - 1;
-
-            // Handle segment cleanup (same logic as PopWithPriorityAsync)
-            if (segmentQueue.Count == 0)
-            {
-                if (headSegment < tailSegment)
-                {
-                    // More segments exist, move to next
-                    await StateManager.RemoveStateAsync(segmentKey);
-
-                    int oldHeadSegment = headSegment;
-                    headSegment++;
-
-                    queueMeta = queueMeta with
-                    {
-                        HeadSegment = headSegment,
-                        TailSegment = tailSegment,
-                        Count = count
-                    };
-                    metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [lockData.Priority] = queueMeta } };
-                    await SetMetadataAsync(metadata);
-
-                    Logger.LogDebug($"[HEAD-ADVANCE] Actor {Id.GetId()}, Priority {lockData.Priority}: " +
-                        $"headSegment advancing from {oldHeadSegment} to {headSegment}, " +
-                        $"tailSegment={tailSegment}, count={count}, " +
-                        $"offloadedRange=({queueMeta.HeadOffloadedSegment}, {queueMeta.TailOffloadedSegment})");
-                }
-                else
-                {
-                    // Last segment empty, queue is now empty
-                    await StateManager.RemoveStateAsync(segmentKey);
-
-                    var updatedQueues = new Dictionary<int, QueueMetadata>(metadata.Queues);
-                    updatedQueues.Remove(lockData.Priority);
-                    metadata = metadata with { Queues = updatedQueues };
-                    await SetMetadataAsync(metadata);
-                }
-            }
-            else
-            {
-                // Segment still has items, save it
-                await StateManager.SetStateAsync(segmentKey, segmentQueue);
-
-                queueMeta = queueMeta with
-                {
-                    HeadSegment = headSegment,
-                    TailSegment = tailSegment,
-                    Count = count
-                };
-                metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [lockData.Priority] = queueMeta } };
-                await SetMetadataAsync(metadata);
-            }
-
-            // Remove lock and commit all changes atomically
-            await StateManager.RemoveStateAsync("_active_lock");
+            var updatedRegistry = lockRegistry.Value.Where(id => id != lockId).ToList();
+            await StateManager.SetStateAsync("_lock_registry", updatedRegistry);
             await StateManager.SaveStateAsync();
+
+            // Unregister reminder (best effort - may not exist if scheduler unavailable)
+            try
+            {
+                await UnregisterReminderAsync($"lock-{lockId}");
+                Logger.LogDebug("Unregistered reminder for lock {LockId}", lockId);
+            }
+            catch (Exception ex)
+            {
+                // Reminder might not exist or scheduler unavailable - this is OK
+                Logger.LogDebug(ex, "Failed to unregister reminder for lock {LockId}", lockId);
+            }
 
             Logger.LogDebug($"Acknowledged lock {lockId}, 1 item processed");
 
@@ -912,32 +957,38 @@ public class QueueActor : Actor, IQueueActor
 
             string lockId = request.LockId;
 
-            // Get lock state
-            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
-            if (!lockState.HasValue)
+            // Get lock registry
+            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
+            if (!lockRegistry.HasValue || !lockRegistry.Value.Contains(lockId))
             {
                 return new ExtendLockResponse
                 {
                     Success = false,
                     NewExpiresAt = 0,
                     ErrorCode = "LOCK_NOT_FOUND",
-                    ErrorMessage = "Lock not found"
+                    ErrorMessage = "Lock not found in registry"
                 };
             }
 
-            var lockData = lockState.Value;
-
-            // Validate lock ID matches
-            if (lockData.LockId != lockId)
+            // Get lock state
+            var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
+            if (!lockState.HasValue)
             {
+                // Lock ID in registry but lock state doesn't exist - clean up
+                var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
+                await StateManager.SetStateAsync("_lock_registry", registry);
+                await StateManager.SaveStateAsync();
+
                 return new ExtendLockResponse
                 {
                     Success = false,
                     NewExpiresAt = 0,
-                    ErrorCode = "INVALID_LOCK_ID",
-                    ErrorMessage = "Invalid lock_id"
+                    ErrorCode = "LOCK_NOT_FOUND",
+                    ErrorMessage = "Lock state not found"
                 };
             }
+
+            var lockData = lockState.Value;
 
             // Check if lock expired
             double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -957,8 +1008,36 @@ public class QueueActor : Actor, IQueueActor
 
             // Update lock state with new expiry
             var updatedLock = lockData with { ExpiresAt = newExpiresAt };
-            await StateManager.SetStateAsync("_active_lock", updatedLock);
+            await StateManager.SetStateAsync($"{lockId}-lock", updatedLock);
             await StateManager.SaveStateAsync();
+
+            // Update reminder with new TTL (best effort)
+            try
+            {
+                await UnregisterReminderAsync($"lock-{lockId}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to unregister old reminder for lock {LockId}", lockId);
+            }
+
+            try
+            {
+                double newTtlSeconds = newExpiresAt - now;
+                if (newTtlSeconds > 0)
+                {
+                    await RegisterReminderAsync(
+                        $"lock-{lockId}",
+                        null,
+                        TimeSpan.FromSeconds(newTtlSeconds),
+                        TimeSpan.FromMilliseconds(-1)); // -1 means fire once
+                    Logger.LogDebug("Updated reminder for lock {LockId} with new TTL", lockId);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to register updated reminder for lock {LockId}", lockId);
+            }
 
             Logger.LogDebug($"Extended lock {lockId} by {request.AdditionalTtlSeconds}s, new expiry: {newExpiresAt}");
 
@@ -1000,30 +1079,50 @@ public class QueueActor : Actor, IQueueActor
 
             string lockId = request.LockId;
 
-            // Get lock state
-            var lockState = await StateManager.TryGetStateAsync<LockState>("_active_lock");
-            if (!lockState.HasValue)
+            // Check registry first
+            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
+
+            // If lock not in registry, distinguish between "not found" vs "invalid"
+            if (!lockRegistry.HasValue || !lockRegistry.Value.Contains(lockId))
             {
+                // If registry has other locks, this lock ID is invalid for this queue
+                if (lockRegistry.HasValue && lockRegistry.Value.Count > 0)
+                {
+                    return new DeadLetterResponse
+                    {
+                        Status = "ERROR",
+                        ErrorCode = "INVALID_LOCK_ID",
+                        Message = "Invalid lock_id provided"
+                    };
+                }
+
+                // If no locks exist, it's simply not found
                 return new DeadLetterResponse
                 {
                     Status = "ERROR",
                     ErrorCode = "LOCK_NOT_FOUND",
-                    Message = "No active lock found"
+                    Message = "Lock not found"
+                };
+            }
+
+            // Get lock state
+            var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
+            if (!lockState.HasValue)
+            {
+                // Lock in registry but state missing - clean up and return not found
+                var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
+                await StateManager.SetStateAsync("_lock_registry", registry);
+                await StateManager.SaveStateAsync();
+
+                return new DeadLetterResponse
+                {
+                    Status = "ERROR",
+                    ErrorCode = "LOCK_NOT_FOUND",
+                    Message = "Lock state not found"
                 };
             }
 
             var lockData = lockState.Value;
-
-            // Validate lock ID matches
-            if (lockData.LockId != lockId)
-            {
-                return new DeadLetterResponse
-                {
-                    Status = "ERROR",
-                    ErrorCode = "INVALID_LOCK_ID",
-                    Message = "Invalid lock_id provided"
-                };
-            }
 
             // Check if lock expired
             double now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -1038,13 +1137,8 @@ public class QueueActor : Actor, IQueueActor
                 };
             }
 
-            // Get the locked item from the segment using Peek()
-            string segmentKey = $"queue_{lockData.Priority}_seg_{lockData.HeadSegment}";
-            var segment = await StateManager.TryGetStateAsync<Queue<string>>(segmentKey);
-
-            // Get item data without removing it (Peek instead of Dequeue)
-            var segmentQueue = segment.Value;
-            string itemJson = segmentQueue.Peek();
+            // Get the locked item from lock state (item already dequeued during PopWithAck)
+            string itemJson = lockData.ItemJson;
 
             // Push to DLQ using actor invoker (enables testing)
             string dlqActorId = $"{Id.GetId()}-deadletter";
@@ -1075,81 +1169,18 @@ public class QueueActor : Actor, IQueueActor
                 };
             }
 
-            // Successfully pushed to DLQ - now remove item from main queue
-            // Dequeue the item and update metadata (same pattern as Acknowledge)
-            var metadata = await GetMetadataAsync();
+            // Successfully pushed to DLQ - item already removed from main queue during PopWithAck
+            // Remove lock and update registry
+            await StateManager.RemoveStateAsync($"{lockId}-lock");
 
-            if (!metadata.Queues.TryGetValue(lockData.Priority, out var queueMeta))
-            {
-                // Priority queue no longer exists - clear lock and return error
-                await StateManager.RemoveStateAsync("_active_lock");
-                await StateManager.SaveStateAsync();
-
-                return new DeadLetterResponse
-                {
-                    Status = "ERROR",
-                    ErrorCode = "QUEUE_NOT_FOUND",
-                    Message = "Priority queue no longer exists"
-                };
-            }
-
-            // Dequeue the item from the segment
-            segmentQueue.Dequeue();
-
-            int headSegment = queueMeta.HeadSegment;
-            int tailSegment = queueMeta.TailSegment;
-            int count = queueMeta.Count - 1;
-
-            // Handle segment cleanup (same logic as Acknowledge)
-            if (segmentQueue.Count == 0)
-            {
-                if (headSegment < tailSegment)
-                {
-                    // More segments exist, move to next
-                    await StateManager.RemoveStateAsync(segmentKey);
-                    headSegment++;
-
-                    queueMeta = queueMeta with
-                    {
-                        HeadSegment = headSegment,
-                        TailSegment = tailSegment,
-                        Count = count
-                    };
-                    metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [lockData.Priority] = queueMeta } };
-                    await SetMetadataAsync(metadata);
-                }
-                else
-                {
-                    // Last segment is now empty - remove priority queue entirely
-                    await StateManager.RemoveStateAsync(segmentKey);
-                    var queues = new Dictionary<int, QueueMetadata>(metadata.Queues);
-                    queues.Remove(lockData.Priority);
-                    metadata = metadata with { Queues = queues };
-                    await SetMetadataAsync(metadata);
-                }
-            }
-            else
-            {
-                // Segment still has items - update segment and metadata
-                await StateManager.SetStateAsync(segmentKey, segmentQueue);
-                queueMeta = queueMeta with
-                {
-                    HeadSegment = headSegment,
-                    TailSegment = tailSegment,
-                    Count = count
-                };
-                metadata = metadata with { Queues = new Dictionary<int, QueueMetadata>(metadata.Queues) { [lockData.Priority] = queueMeta } };
-                await SetMetadataAsync(metadata);
-            }
-
-            // Remove lock
-            await StateManager.RemoveStateAsync("_active_lock");
+            var updatedRegistry = lockRegistry.Value.Where(id => id != lockId).ToList();
+            await StateManager.SetStateAsync("_lock_registry", updatedRegistry);
             await StateManager.SaveStateAsync();
 
             return new DeadLetterResponse
             {
                 Status = "SUCCESS",
-                DlqActorId = dlqActorId,
+                DlqId = dlqActorId,
                 Message = "Item moved to dead letter queue and removed from main queue"
             };
         }

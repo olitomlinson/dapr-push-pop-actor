@@ -35,10 +35,11 @@ public class DeadLetterTests(DaprTestFixture fixture)
 
         var popWithAckResult = await popWithAckResponse.Content.ReadFromJsonAsync<ApiPopWithAckResponse>();
         Assert.NotNull(popWithAckResult);
-        Assert.NotNull(popWithAckResult.LockId);
+        Assert.NotNull(popWithAckResult.Items);
+        Assert.Single(popWithAckResult.Items);
 
         // Act - Send to dead letter queue
-        var deadLetterRequest = new ApiDeadLetterRequest(popWithAckResult.LockId);
+        var deadLetterRequest = new ApiDeadLetterRequest(popWithAckResult.Items[0].LockId);
         var deadLetterResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/deadletter", deadLetterRequest);
 
         // Assert - Should return 200 OK
@@ -47,8 +48,8 @@ public class DeadLetterTests(DaprTestFixture fixture)
         var deadLetterResult = await deadLetterResponse.Content.ReadFromJsonAsync<ApiDeadLetterResponse>();
         Assert.NotNull(deadLetterResult);
         Assert.True(deadLetterResult.Success);
-        Assert.NotNull(deadLetterResult.DlqActorId);
-        Assert.Equal($"{queueId}-deadletter", deadLetterResult.DlqActorId);
+        Assert.NotNull(deadLetterResult.DlqId);
+        Assert.Equal($"{queueId}-deadletter", deadLetterResult.DlqId);
 
         // Verify original queue is now unlocked and empty
         var popRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{queueId}/pop");
@@ -64,9 +65,10 @@ public class DeadLetterTests(DaprTestFixture fixture)
 
         var dlqPopResult = await dlqPopResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
         Assert.NotNull(dlqPopResult);
-        Assert.NotNull(dlqPopResult.Item);
+        Assert.NotNull(dlqPopResult.Items);
+        Assert.Single(dlqPopResult.Items);
 
-        var dlqItem = (JsonElement)dlqPopResult.Item;
+        var dlqItem = (JsonElement)dlqPopResult.Items[0].Item;
         Assert.Equal(1, dlqItem.GetProperty("id").GetInt32());
         Assert.Equal("failed-item", dlqItem.GetProperty("value").GetString());
     }
@@ -132,22 +134,23 @@ public class DeadLetterTests(DaprTestFixture fixture)
 
         var popWithAckResult = await popWithAckResponse.Content.ReadFromJsonAsync<ApiPopWithAckResponse>();
         Assert.NotNull(popWithAckResult);
-        Assert.NotNull(popWithAckResult.LockId);
+        Assert.NotNull(popWithAckResult.Items);
+        Assert.Single(popWithAckResult.Items);
 
-        // Wait for lock to expire
+        // Wait for lock to expire and reminder to clean it up
         await Task.Delay(TimeSpan.FromSeconds(2.5));
 
-        // Act - Try to deadletter with expired lock
-        var deadLetterRequest = new ApiDeadLetterRequest(popWithAckResult.LockId);
+        // Act - Try to deadletter with expired lock (that has been cleaned up by reminder)
+        var deadLetterRequest = new ApiDeadLetterRequest(popWithAckResult.Items[0].LockId);
         var deadLetterResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/deadletter", deadLetterRequest);
 
-        // Assert - Should return 410 Gone
-        Assert.Equal(HttpStatusCode.Gone, deadLetterResponse.StatusCode);
+        // Assert - Should return 404 Not Found (lock was cleaned up by reminder after expiry)
+        Assert.Equal(HttpStatusCode.NotFound, deadLetterResponse.StatusCode);
 
         var deadLetterResult = await deadLetterResponse.Content.ReadFromJsonAsync<ApiDeadLetterResponse>();
         Assert.NotNull(deadLetterResult);
         Assert.False(deadLetterResult.Success);
-        Assert.Equal("LOCK_EXPIRED", deadLetterResult.ErrorCode);
+        Assert.Equal("LOCK_NOT_FOUND", deadLetterResult.ErrorCode);
     }
 
     [Fact]
@@ -164,10 +167,11 @@ public class DeadLetterTests(DaprTestFixture fixture)
         popWithAckRequest.Headers.Add("ttl_seconds", "30");
         var popWithAckResponse = await fixture.ApiClient.SendAsync(popWithAckRequest);
         var popWithAckResult = await popWithAckResponse.Content.ReadFromJsonAsync<ApiPopWithAckResponse>();
-        Assert.NotNull(popWithAckResult?.LockId);
+        Assert.NotNull(popWithAckResult?.Items);
+        Assert.Single(popWithAckResult.Items);
 
         // Act - Send to dead letter queue
-        var deadLetterRequest = new ApiDeadLetterRequest(popWithAckResult.LockId);
+        var deadLetterRequest = new ApiDeadLetterRequest(popWithAckResult.Items[0].LockId);
         await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/deadletter", deadLetterRequest);
 
         // Push priority 1 item to DLQ
@@ -180,7 +184,7 @@ public class DeadLetterTests(DaprTestFixture fixture)
         var dlqPopResponse = await fixture.ApiClient.SendAsync(dlqPopRequest);
         var dlqPopResult = await dlqPopResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
 
-        var dlqItem = (JsonElement)dlqPopResult!.Item!;
+        var dlqItem = (JsonElement)dlqPopResult!.Items[0].Item;
         Assert.Equal(1, dlqItem.GetProperty("id").GetInt32()); // Priority 0 item comes first
     }
 
@@ -217,7 +221,7 @@ public class DeadLetterTests(DaprTestFixture fixture)
         });
 
         Assert.Equal(PopWithAckResponse.ResultOneofCase.Success, popResponse.ResultCase);
-        var lockId = popResponse.Success.LockId;
+        var lockId = popResponse.Success.LockId[0];
 
         // Act
         var deadLetterResponse = await client.DeadLetterAsync(new DeadLetterRequest
@@ -228,7 +232,7 @@ public class DeadLetterTests(DaprTestFixture fixture)
 
         // Assert
         Assert.Equal(DeadLetterResponse.ResultOneofCase.Success, deadLetterResponse.ResultCase);
-        Assert.Equal($"{queueId}-deadletter", deadLetterResponse.Success.DlqActorId);
+        Assert.Equal($"{queueId}-deadletter", deadLetterResponse.Success.DlqId);
     }
 
     [Fact]
@@ -270,10 +274,10 @@ public class DeadLetterTests(DaprTestFixture fixture)
             TtlSeconds = 2
         });
 
-        var lockId = popResponse.Success.LockId;
+        var lockId = popResponse.Success.LockId[0];
         await Task.Delay(TimeSpan.FromSeconds(2.5));
 
-        // Act & Assert
+        // Act & Assert - Lock expired and was cleaned up by reminder, so it's not found
         var ex = await Assert.ThrowsAsync<RpcException>(async () =>
             await client.DeadLetterAsync(new DeadLetterRequest
             {
@@ -281,6 +285,6 @@ public class DeadLetterTests(DaprTestFixture fixture)
                 LockId = lockId
             }));
 
-        Assert.Equal(StatusCode.FailedPrecondition, ex.StatusCode);
+        Assert.Equal(StatusCode.NotFound, ex.StatusCode);
     }
 }

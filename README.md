@@ -1,6 +1,6 @@
 # DaprMQ
 
-A simple, priority-based FIFO queue implementation. Store and retrieve JSON-payloads, with transactional guaranteed ordering and persistent state.
+A simple, queue implementation. Store and retrieve JSON-payloads of any size. Chose from either gauranteed FIFO consumers, or competing consumers (Best efforts FIFO)
 
 ## Quick Start
 
@@ -13,7 +13,17 @@ git clone https://github.com/olitomlinson/dapr-mq.git
 cd dapr-mq
 
 docker-compose up
+```
 
+### Explore the API capabilities of DaprMQ via the bundled Dashboard
+
+```http://localhost:9000```
+
+![Alt text of the image](/docs/dash.png)
+
+### Call the APIs directly
+
+```bash
 # Push a message to the queue with priority 1
 curl -X POST http://localhost:8000/queue/my-queue/push \
   -H "Content-Type: application/json" \
@@ -105,17 +115,19 @@ As part of driving towards a more feature complete message broker, the following
 6. **Max Retries / Automatic Dead-lettering**: When calling Pop With Acknowledgements, if a message is popped N number of times without Acknowledgement, the message will be deemed poisonous, and automatically moved to the Deadletter queue.
 7. **Dead-letter Forwarding**: Send a HTTP notification to any endpoint when a dead-letter message has been produced. Useful for alerting Operators, and triggering automated healing routines that sit external to the system.
 8. **Priority Delete**: Delete a priority sub-queue in one operation.
-9. **Scheduled Enque**: A message can be pushed to the front of any sub-queue, at a future scheduled time.
-10. **Message revocation**: A message can be removed from the queue, regardless of its position
-11. ~~**Bulk Push**: Write many messages to a queue in one atomic operation.~~
-12. **Bulk Pop**: Pop many message from a queue in one atomic operation.
+9. **Scheduled Enque**: A message can be pushed to the front of any sub-queue, at a future scheduled time (Requires Message Receipts feature)
+10. **Message revocation**: A message can be removed from the queue, regardless of its position (Requires Message Receipts feature)
+11. [x] **Bulk Push**: Write many messages to a queue in one atomic operation.
+12. [x] **Bulk Pop**: Pop many message from a queue in one atomic operation.
 13. **Rate-limit**: Push and Pop operations are protected with a per queue rate-limiter.
 14. **Qoutas**: Queues are governed by Push and Pop qouates per minute/hour/day.
 15. **Queue capacity limit**: Prevent Pushes until queue length drops below a capacity limit.
 16. **Queue reorder functions**: Reorder a queue based on a field within the Json.
 17. **Message functions**: Before a Pop is about to occur, call a HTTP endpoint with the message payload and replace message payload with the HTTP response.
-18. **Competing Consumers**: Experimental project (requires Bulk Push and Bulk Pop as a pre-requisite)
+18. [x] **Competing Consumers**: Experimental project (requires Bulk Push and Bulk Pop as a pre-requisite)~~
 19. **Language SDKs**: Competing Consumers would benefit from language SDKs which implement a gRPC message pump loop. This would allow the SDK to buffer messages and relay them to the applications message handler as push-based model to further increase throughput and reduce latency.
+20. **Message TTL**: After a message has been in the queue for longer than the target ttl, drop it or send it to the dlq.
+21. **Message Receipts**: on successful publish, return a unique receipt id which encodes the segment, and maybe even position
 
 
 ## Use Cases

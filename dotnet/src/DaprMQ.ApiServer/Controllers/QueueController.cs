@@ -96,11 +96,19 @@ public class QueueController : ControllerBase
     public async Task<IActionResult> Pop(
         string queueId,
         [FromHeader] bool require_ack = false,
-        [FromHeader] int ttl_seconds = 30)
+        [FromHeader] int ttl_seconds = 30,
+        [FromHeader] bool allow_competing_consumers = false,
+        [FromHeader] int count = 1)
     {
         try
         {
-            _logger.LogDebug($"Pop request for queue {queueId}, require_ack={require_ack}");
+            _logger.LogDebug($"Pop request for queue {queueId}, require_ack={require_ack}, allow_competing_consumers={allow_competing_consumers}, count={count}");
+
+            // Validate count parameter
+            if (count < 0 || count > 100)
+            {
+                return BadRequest(new ApiErrorResponse("Count must be between 0 and 100"));
+            }
 
             var actorId = new ActorId(queueId);
 
@@ -111,11 +119,13 @@ public class QueueController : ControllerBase
                     ActorMethodNames.PopWithAck,
                     new PopWithAckRequest
                     {
-                        TtlSeconds = ttl_seconds
+                        TtlSeconds = ttl_seconds,
+                        Count = count,
+                        AllowCompetingConsumers = allow_competing_consumers
                     });
 
-                // If locked by another operation (Locked=true but no LockId), return 423 Locked
-                if (result.Locked && result.LockId == null)
+                // If locked by another operation (Locked=true but no items), return 423 Locked
+                if (result.Locked && result.Items.Count == 0)
                 {
                     return StatusCode(423, new ApiLockedResponse(
                         result.Message,
@@ -129,29 +139,26 @@ public class QueueController : ControllerBase
                     return NoContent();
                 }
 
+                // Return items array
+                var apiItems = result.Items.Select(item =>
+                    new ApiPopWithAckItem(
+                        JsonDocument.Parse(item.ItemJson).RootElement,
+                        item.Priority,
+                        item.LockId,
+                        item.LockExpiresAt)).ToList();
 
-                return Ok(new ApiPopWithAckResponse(
-                JsonDocument.Parse(result.ItemJson).RootElement,
-                result.Locked,
-                result.LockId,
-                result.LockExpiresAt,
-                result.Message,
-                result.Priority));
-
+                return Ok(new ApiPopWithAckResponse(apiItems, result.Locked, result.Message));
             }
             else
             {
-                var result = await _actorInvoker.InvokeMethodAsync<PopResponse>(
+                var result = await _actorInvoker.InvokeMethodAsync<PopRequest, PopResponse>(
                     actorId,
-                    ActorMethodNames.Pop);
-
-                // DEBUG: Log what we actually received
-                _logger.LogWarning($"[DEBUG] Pop result - ItemJson: '{result.ItemJson ?? "NULL"}', Locked: {result.Locked}, IsEmpty: {result.IsEmpty}, Message: '{result.Message ?? "NULL"}'");
+                    ActorMethodNames.Pop,
+                    new PopRequest { Count = count });
 
                 // If locked by another operation, return 423 Locked
                 if (result.Locked)
                 {
-                    _logger.LogWarning("[DEBUG] Returning 423 Locked");
                     return StatusCode(423, new ApiLockedResponse(
                         result.Message,
                         result.LockExpiresAt
@@ -159,13 +166,18 @@ public class QueueController : ControllerBase
                 }
 
                 // If queue is empty, return 204 No Content
-                // Check both IsEmpty flag and null ItemJson for backwards compatibility
                 if (result.IsEmpty)
                 {
                     return NoContent();
                 }
 
-                return Ok(new ApiPopResponse(JsonDocument.Parse(result.ItemJson).RootElement, result.Priority));
+                // Return items array
+                var apiItems = result.Items.Select(item =>
+                    new ApiPopItem(
+                        JsonDocument.Parse(item.ItemJson).RootElement,
+                        item.Priority)).ToList();
+
+                return Ok(new ApiPopResponse(apiItems));
             }
         }
         catch (Exception ex)
@@ -359,7 +371,7 @@ public class QueueController : ControllerBase
             return Ok(new ApiDeadLetterResponse(
                 true,
                 result.Message ?? "Item moved to dead letter queue",
-                DlqActorId: result.DlqActorId
+                DlqId: result.DlqId
             ));
         }
         catch (Exception ex)

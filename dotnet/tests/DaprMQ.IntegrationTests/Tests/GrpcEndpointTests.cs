@@ -160,7 +160,8 @@ public class GrpcEndpointTests(DaprTestFixture fixture)
 
         // Assert
         Assert.Equal(PopResponse.ResultOneofCase.Success, popResponse.ResultCase);
-        Assert.Equal("{\"id\":42,\"name\":\"test-item\"}", popResponse.Success.ItemJson);
+        Assert.Single(popResponse.Success.ItemJson);
+        Assert.Equal("{\"id\":42,\"name\":\"test-item\"}", popResponse.Success.ItemJson[0]);
     }
 
     [Fact]
@@ -189,8 +190,9 @@ public class GrpcEndpointTests(DaprTestFixture fixture)
 
         // Assert
         Assert.Equal(PopWithAckResponse.ResultOneofCase.Success, popResponse.ResultCase);
-        Assert.NotEmpty(popResponse.Success.LockId);
-        Assert.True(popResponse.Success.LockExpiresAt > 0);
+        Assert.Single(popResponse.Success.LockId);
+        Assert.NotEmpty(popResponse.Success.LockId[0]);
+        Assert.True(popResponse.Success.LockExpiresAt[0] > 0);
     }
 
     [Fact]
@@ -214,7 +216,7 @@ public class GrpcEndpointTests(DaprTestFixture fixture)
             TtlSeconds = 30
         };
         var popResponse = await client.PopWithAckAsync(popRequest);
-        var lockId = popResponse.Success.LockId;
+        var lockId = popResponse.Success.LockId[0];
 
         // Act
         var ackRequest = new AcknowledgeRequest
@@ -268,8 +270,8 @@ public class GrpcEndpointTests(DaprTestFixture fixture)
             TtlSeconds = 30
         };
         var popResponse = await client.PopWithAckAsync(popRequest);
-        var lockId = popResponse.Success.LockId;
-        var originalExpiry = popResponse.Success.LockExpiresAt;
+        var lockId = popResponse.Success.LockId[0];
+        var originalExpiry = popResponse.Success.LockExpiresAt[0];
 
         // Act
         var extendRequest = new ExtendLockRequest

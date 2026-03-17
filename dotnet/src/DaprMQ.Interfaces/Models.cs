@@ -49,6 +49,17 @@ public record PushResponse
 }
 
 /// <summary>
+/// Request model for Pop operation.
+/// </summary>
+public record PopRequest
+{
+    /// <summary>
+    /// Number of items to pop (1-100, default: 1).
+    /// </summary>
+    public int Count { get; init; } = 1;
+}
+
+/// <summary>
 /// Request model for PopWithAck operation.
 /// </summary>
 public record PopWithAckRequest
@@ -57,6 +68,32 @@ public record PopWithAckRequest
     /// Lock TTL in seconds (1-300).
     /// </summary>
     public int TtlSeconds { get; init; } = 30;
+
+    /// <summary>
+    /// Number of items to pop with acknowledgement (1-100, default: 1).
+    /// </summary>
+    public int Count { get; init; } = 1;
+
+    /// <summary>
+    /// Whether to allow competing consumers (multiple parallel locks). Default: false (legacy single-lock behavior).
+    /// </summary>
+    public bool AllowCompetingConsumers { get; init; } = false;
+}
+
+/// <summary>
+/// Individual item in a Pop response.
+/// </summary>
+public record PopItem
+{
+    /// <summary>
+    /// The item (as JSON string).
+    /// </summary>
+    public required string ItemJson { get; init; }
+
+    /// <summary>
+    /// Priority of the item.
+    /// </summary>
+    public required int Priority { get; init; }
 }
 
 /// <summary>
@@ -65,14 +102,9 @@ public record PopWithAckRequest
 public record PopResponse
 {
     /// <summary>
-    /// The popped item (as JSON string), or null if queue is empty or locked.
+    /// Array of popped items (empty if queue is empty or locked).
     /// </summary>
-    public string? ItemJson { get; init; }
-
-    /// <summary>
-    /// Priority of the popped item (null if no item was popped).
-    /// </summary>
-    public int? Priority { get; init; }
+    public List<PopItem> Items { get; init; } = new();
 
     /// <summary>
     /// Whether the queue is locked.
@@ -90,9 +122,35 @@ public record PopResponse
     public string? Message { get; init; }
 
     /// <summary>
-    /// Unix timestamp when lock expires.
+    /// Unix timestamp when lock expires (for locked queues).
     /// </summary>
     public double? LockExpiresAt { get; init; }
+}
+
+/// <summary>
+/// Individual item in a PopWithAck response.
+/// </summary>
+public record PopWithAckItem
+{
+    /// <summary>
+    /// The item (as JSON string).
+    /// </summary>
+    public required string ItemJson { get; init; }
+
+    /// <summary>
+    /// Priority of the item.
+    /// </summary>
+    public required int Priority { get; init; }
+
+    /// <summary>
+    /// Lock ID for acknowledgement.
+    /// </summary>
+    public required string LockId { get; init; }
+
+    /// <summary>
+    /// Unix timestamp when lock expires.
+    /// </summary>
+    public required double LockExpiresAt { get; init; }
 }
 
 /// <summary>
@@ -101,14 +159,9 @@ public record PopResponse
 public record PopWithAckResponse
 {
     /// <summary>
-    /// The popped item (as JSON string), or null if queue is empty or locked.
+    /// Array of locked items (empty if queue is empty or locked).
     /// </summary>
-    public string? ItemJson { get; init; }
-
-    /// <summary>
-    /// Priority of the popped item (null if no item was popped).
-    /// </summary>
-    public int? Priority { get; init; }
+    public List<PopWithAckItem> Items { get; init; } = new();
 
     /// <summary>
     /// Whether the queue is locked.
@@ -121,19 +174,30 @@ public record PopWithAckResponse
     public bool IsEmpty { get; init; }
 
     /// <summary>
-    /// Lock ID for acknowledgement (if locked).
-    /// </summary>
-    public string? LockId { get; init; }
-
-    /// <summary>
-    /// Unix timestamp when lock expires.
-    /// </summary>
-    public double? LockExpiresAt { get; init; }
-
-    /// <summary>
     /// Status message.
     /// </summary>
     public string? Message { get; init; }
+
+    // Legacy properties for backward compatibility (deprecated)
+    /// <summary>
+    /// [DEPRECATED] Use Items[0].ItemJson. The popped item (as JSON string), or null if queue is empty or locked.
+    /// </summary>
+    public string? ItemJson => Items.Count > 0 ? Items[0].ItemJson : null;
+
+    /// <summary>
+    /// [DEPRECATED] Use Items[0].Priority. Priority of the popped item (null if no item was popped).
+    /// </summary>
+    public int? Priority => Items.Count > 0 ? Items[0].Priority : null;
+
+    /// <summary>
+    /// [DEPRECATED] Use Items[0].LockId. Lock ID for acknowledgement (if locked).
+    /// </summary>
+    public string? LockId => Items.Count > 0 ? Items[0].LockId : null;
+
+    /// <summary>
+    /// [DEPRECATED] Use Items[0].LockExpiresAt. Unix timestamp when lock expires.
+    /// </summary>
+    public double? LockExpiresAt => Items.Count > 0 ? Items[0].LockExpiresAt : null;
 }
 
 /// <summary>
@@ -247,7 +311,7 @@ public record DeadLetterResponse
     public string? Message { get; init; }
 
     /// <summary>
-    /// Dead letter queue actor ID where the item was moved.
+    /// Dead letter queue ID where the item was moved.
     /// </summary>
-    public string? DlqActorId { get; init; }
+    public string? DlqId { get; init; }
 }
