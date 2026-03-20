@@ -109,13 +109,13 @@ public class DeadLetterTests(DaprTestFixture fixture)
         var deadLetterRequest = new ApiDeadLetterRequest("wrong-lock-id-12345");
         var deadLetterResponse = await fixture.ApiClient.PostAsJsonAsync($"/queue/{queueId}/deadletter", deadLetterRequest);
 
-        // Assert - Should return 400 Bad Request
-        Assert.Equal(HttpStatusCode.BadRequest, deadLetterResponse.StatusCode);
+        // Assert - Should return 404 Not Found (with counter approach, can't distinguish invalid vs not found)
+        Assert.Equal(HttpStatusCode.NotFound, deadLetterResponse.StatusCode);
 
         var deadLetterResult = await deadLetterResponse.Content.ReadFromJsonAsync<ApiDeadLetterResponse>();
         Assert.NotNull(deadLetterResult);
         Assert.False(deadLetterResult.Success);
-        Assert.Equal("INVALID_LOCK_ID", deadLetterResult.ErrorCode);
+        Assert.Equal("LOCK_NOT_FOUND", deadLetterResult.ErrorCode);
     }
 
     [Fact]

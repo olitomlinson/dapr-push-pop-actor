@@ -49,8 +49,6 @@ public class LockAndAcknowledgementTests(DaprTestFixture fixture)
         Assert.NotNull(lockedResponse);
         Assert.NotNull(lockedResponse.Message);
         Assert.Contains("locked", lockedResponse.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.NotNull(lockedResponse.LockExpiresAt);
-        Assert.True(lockedResponse.LockExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds());
     }
 
     [Fact]
@@ -137,7 +135,6 @@ public class LockAndAcknowledgementTests(DaprTestFixture fixture)
             var lockedResponse = await blockedPopResponse.Content.ReadFromJsonAsync<ApiLockedResponse>();
             Assert.NotNull(lockedResponse);
             Assert.NotNull(lockedResponse.Message);
-            Assert.NotNull(lockedResponse.LockExpiresAt);
         }
 
         // Attempt another PopWithAck - should also be blocked
