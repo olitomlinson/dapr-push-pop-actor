@@ -70,6 +70,17 @@ public class QueueActorTests
                 return new ConditionalValue<List<string>>(false, null);
             });
 
+        // Setup TryGetStateAsync for int (lock counter)
+        mock.Setup(m => m.TryGetStateAsync<int>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken ct) =>
+            {
+                if (stateData.ContainsKey(key) && stateData[key] is int intValue)
+                {
+                    return new ConditionalValue<int>(true, intValue);
+                }
+                return new ConditionalValue<int>(false, default);
+            });
+
         // Setup SetStateAsync
         mock.Setup(m => m.SetStateAsync(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<CancellationToken>()))
             .Returns((string key, object value, CancellationToken ct) =>
@@ -561,9 +572,9 @@ public class QueueActorTests
 
         // Assert
         Assert.NotNull(result.LockId);
-        var lockRegistry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
-        Assert.True(lockRegistry.HasValue);
-        Assert.Contains(result.LockId, lockRegistry.Value);
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(1, lockCount.Value);
     }
 
     [Fact]
@@ -589,9 +600,9 @@ public class QueueActorTests
 
         // Assert
         Assert.True(ackResult.Success);
-        var lockRegistry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
-        Assert.True(lockRegistry.HasValue);
-        Assert.DoesNotContain(lockId, lockRegistry.Value);
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(0, lockCount.Value);
     }
 
     [Fact]
@@ -677,7 +688,7 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{expiredLockId}-lock", expiredLock);
-        await mockStateManager.Object.SetStateAsync("_lock_registry", new List<string> { expiredLockId });
+        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
 
         // Act - Simulate reminder cleanup (reminder would fire automatically in production)
         await actor.ReceiveReminderAsync($"lock-{expiredLockId}", Array.Empty<byte>(), TimeSpan.Zero, TimeSpan.Zero);
@@ -694,11 +705,10 @@ public class QueueActorTests
         var expiredLockState = await mockStateManager.Object.TryGetStateAsync<LockState>($"{expiredLockId}-lock");
         Assert.False(expiredLockState.HasValue);
 
-        // Verify new lock was created in registry
-        var lockRegistry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
-        Assert.True(lockRegistry.HasValue);
-        Assert.Contains(result.LockId, lockRegistry.Value);
-        Assert.DoesNotContain(expiredLockId, lockRegistry.Value);
+        // Verify lock count updated (old lock removed, new lock added = still 1)
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(1, lockCount.Value);
     }
 
     [Fact]
@@ -832,8 +842,6 @@ public class QueueActorTests
         Assert.Empty(popResult.Items);
         Assert.True(popResult.Locked);
         Assert.Equal("Queue is locked by another operation", popResult.Message);
-        Assert.NotNull(popResult.LockExpiresAt);
-        Assert.True(popResult.LockExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
         // After acknowledgement, queue should be empty
         var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = result.Items[0].LockId });
@@ -935,8 +943,6 @@ public class QueueActorTests
         Assert.Empty(blockedPop.Items);
         Assert.True(blockedPop.Locked);
         Assert.Equal("Queue is locked by another operation", blockedPop.Message);
-        Assert.NotNull(blockedPop.LockExpiresAt);
-        Assert.True(blockedPop.LockExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
         // Acknowledge the lock
         var ackResult = await actor.Acknowledge(new Interfaces.AcknowledgeRequest { LockId = lockId });
@@ -1023,8 +1029,6 @@ public class QueueActorTests
         Assert.Empty(blockedPop.Items);
         Assert.True(blockedPop.Locked);
         Assert.Equal("Queue is locked by another operation", blockedPop.Message);
-        Assert.NotNull(blockedPop.LockExpiresAt);
-        Assert.True(blockedPop.LockExpiresAt > DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
         // Attempt another PopWithAck - should be blocked
         var blockedPopWithAck = await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
@@ -1439,12 +1443,12 @@ public class QueueActorTests
         });
         await actor.PopWithAck(new Interfaces.PopWithAckRequest { TtlSeconds = 30 });
 
-        // Act - Try to deadletter with wrong lock ID (registry has a lock, but not this one)
+        // Act - Try to deadletter with wrong lock ID
         var result = await actor.DeadLetter(new Interfaces.DeadLetterRequest { LockId = "wrong-lock-id" });
 
-        // Assert
+        // Assert - With counter approach, can't distinguish invalid vs not found
         Assert.Equal("ERROR", result.Status);
-        Assert.Equal("INVALID_LOCK_ID", result.ErrorCode);
+        Assert.Equal("LOCK_NOT_FOUND", result.ErrorCode);
     }
 
     [Fact]
@@ -1477,7 +1481,7 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{popWithAckResult.LockId}-lock", lockState);
-        await mockStateManager.Object.SetStateAsync("_lock_registry", new List<string> { popWithAckResult.LockId });
+        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
 
         // Act - Try to deadletter with expired lock
         var result = await actor.DeadLetter(new Interfaces.DeadLetterRequest { LockId = popWithAckResult.LockId });
@@ -1537,18 +1541,18 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{lockId}-lock", lockData);
-        await mockStateManager.Object.SetStateAsync("_lock_registry", new List<string> { lockId });
+        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
 
         // Act - Simulate reminder callback
         await actor.ReceiveReminderAsync($"lock-{lockId}", Array.Empty<byte>(), TimeSpan.Zero, TimeSpan.Zero);
 
-        // Assert - Lock state should be removed and registry should be empty
+        // Assert - Lock state should be removed and lock count should be 0
         var lockState = await mockStateManager.Object.TryGetStateAsync<LockState>($"{lockId}-lock");
-        var lockRegistry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
 
         Assert.False(lockState.HasValue);
-        Assert.True(lockRegistry.HasValue);
-        Assert.Empty(lockRegistry.Value);
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(0, lockCount.Value);
     }
 
     [Fact]
@@ -1571,38 +1575,18 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{lockId}-lock", lockData);
-        await mockStateManager.Object.SetStateAsync("_lock_registry", new List<string> { lockId });
+        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
 
         // Act - Simulate reminder callback with non-lock reminder name
         await actor.ReceiveReminderAsync("some-other-reminder", new byte[0], TimeSpan.Zero, TimeSpan.Zero);
 
-        // Assert - Lock state and registry should still exist
+        // Assert - Lock state and lock count should still exist
         var lockState = await mockStateManager.Object.TryGetStateAsync<LockState>($"{lockId}-lock");
-        var lockRegistry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
 
         Assert.True(lockState.HasValue);
-        Assert.True(lockRegistry.HasValue);
-        Assert.Contains(lockId, lockRegistry.Value);
-    }
-
-    [Fact]
-    public async Task ReceiveReminderAsync_WithMissingLockState_CleansUpCurrentLockId()
-    {
-        // Arrange
-        var mockStateManager = CreateMockStateManager();
-        var actor = await CreateActorAsync(mockStateManager);
-
-        // Create only _lock_registry (lock state missing)
-        string lockId = "test-lock-id";
-        await mockStateManager.Object.SetStateAsync("_lock_registry", new List<string> { lockId });
-
-        // Act - Simulate reminder callback
-        await actor.ReceiveReminderAsync($"lock-{lockId}", Array.Empty<byte>(), TimeSpan.Zero, TimeSpan.Zero);
-
-        // Assert - Lock should be removed from registry
-        var lockRegistry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
-        Assert.True(lockRegistry.HasValue);
-        Assert.Empty(lockRegistry.Value);
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(1, lockCount.Value);
     }
 
     [Fact]
@@ -1944,9 +1928,9 @@ public class QueueActorTests
         // Assert
         Assert.True(ackResult.Success);
 
-        var registry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
-        Assert.True(registry.HasValue);
-        Assert.DoesNotContain(popResult.LockId!, registry.Value);
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(0, lockCount.Value);
     }
 
     [Fact]
@@ -1978,9 +1962,9 @@ public class QueueActorTests
         // Assert
         Assert.True(extendResult.Success);
 
-        var registry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
-        Assert.True(registry.HasValue);
-        Assert.Contains(popResult.LockId!, registry.Value);
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(1, lockCount.Value);
     }
 
     [Fact]
@@ -2006,10 +1990,10 @@ public class QueueActorTests
         // Act - trigger reminder (simulating lock expiry)
         await actor.ReceiveReminderAsync($"lock-{lockId}", Array.Empty<byte>(), TimeSpan.Zero, TimeSpan.FromMilliseconds(-1));
 
-        // Assert - registry updated to remove lock
-        var registry = await mockStateManager.Object.TryGetStateAsync<List<string>>("_lock_registry");
-        Assert.True(registry.HasValue);
-        Assert.DoesNotContain(lockId, registry.Value);
+        // Assert - lock count updated to 0
+        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        Assert.True(lockCount.HasValue);
+        Assert.Equal(0, lockCount.Value);
     }
 
     // ===== Bulk Pop Tests =====
@@ -2197,7 +2181,6 @@ public class QueueActorTests
         Assert.Empty(result.Items);
         Assert.False(result.IsEmpty);
         Assert.True(result.Locked);
-        Assert.NotNull(result.LockExpiresAt);
     }
 
     [Fact]

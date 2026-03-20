@@ -409,29 +409,16 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             // Check if queue is locked (any active lock blocks Pop)
             if (!skipLockCheck)
             {
-                var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
-                if (lockRegistry.HasValue && lockRegistry.Value.Count > 0)
+                var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
+                if (lockCount.HasValue && lockCount.Value > 0)
                 {
-                    // Find any valid lock to report
-                    foreach (var existingLockId in lockRegistry.Value)
+                    Logger.LogDebug("Queue is locked, cannot pop");
+                    return (new PopResponse
                     {
-                        var lockState = await StateManager.TryGetStateAsync<LockState>($"{existingLockId}-lock");
-                        if (lockState.HasValue)
-                        {
-                            Logger.LogDebug("Queue is locked, cannot pop");
-                            return (new PopResponse
-                            {
-                                Locked = true,
-                                IsEmpty = false,
-                                Message = "Queue is locked by another operation",
-                                LockExpiresAt = lockState.Value.ExpiresAt
-                            }, -1, null);
-                        }
-                    }
-
-                    // If we get here, all locks in registry are orphaned - clean up
-                    await StateManager.SetStateAsync("_lock_registry", new List<string>());
-                    await StateManager.SaveStateAsync();
+                        Locked = true,
+                        IsEmpty = false,
+                        Message = "Queue is locked by another operation"
+                    }, -1, null);
                 }
             }
 
@@ -636,15 +623,14 @@ public class QueueActor : Actor, IQueueActor, IRemindable
                     }
                 }
 
-                // Remove lock state and update registry (only after successful re-queue or if lock doesn't exist)
+                // Remove lock state and decrement counter (only after successful re-queue or if lock doesn't exist)
                 await StateManager.RemoveStateAsync($"{lockId}-lock");
 
-                // Remove from registry
-                var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
-                if (lockRegistry.HasValue)
+                // Decrement lock counter
+                var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
+                if (lockCount.HasValue && lockCount.Value > 0)
                 {
-                    var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
-                    await StateManager.SetStateAsync("_lock_registry", registry);
+                    await StateManager.SetStateAsync("_lock_count", lockCount.Value - 1);
                 }
 
                 await StateManager.SaveStateAsync();
@@ -682,46 +668,11 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             int count = Math.Max(1, Math.Min(100, request.Count));
 
             // Get lock registry
-            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
-
-            // Get or initialize registry
-            var registry = lockRegistry.HasValue ? lockRegistry.Value : new List<string>();
-
-            // Clean up orphaned registry entries (lock ID in registry but no lock state)
-            var validLocks = new List<string>();
-            foreach (var existingLockId in registry)
-            {
-                var lockState = await StateManager.TryGetStateAsync<LockState>($"{existingLockId}-lock");
-                if (lockState.HasValue)
-                {
-                    validLocks.Add(existingLockId);
-                }
-            }
-            if (validLocks.Count != registry.Count)
-            {
-                Logger.LogDebug("Cleaned up {Count} orphaned lock registry entries", registry.Count - validLocks.Count);
-                registry = validLocks;
-                await StateManager.SetStateAsync("_lock_registry", registry);
-                await StateManager.SaveStateAsync();
-            }
+            var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
 
             // Legacy mode: block if ANY lock exists
-            if (!request.AllowCompetingConsumers && registry.Count > 0)
+            if (!request.AllowCompetingConsumers && (lockCount.HasValue && lockCount.Value > 0))
             {
-                // Find the earliest expiring lock to report
-                double? earliestExpiry = null;
-                foreach (var existingLockId in registry)
-                {
-                    var lockState = await StateManager.TryGetStateAsync<LockState>($"{existingLockId}-lock");
-                    if (lockState.HasValue)
-                    {
-                        if (!earliestExpiry.HasValue || lockState.Value.ExpiresAt < earliestExpiry.Value)
-                        {
-                            earliestExpiry = lockState.Value.ExpiresAt;
-                        }
-                    }
-                }
-
                 return new PopWithAckResponse
                 {
                     Locked = true,
@@ -765,8 +716,7 @@ public class QueueActor : Actor, IQueueActor, IRemindable
 
                 await StateManager.SetStateAsync($"{lockId}-lock", lockData);
 
-                // Add to registry
-                registry.Add(lockId);
+                // Track lock ID for reminder registration
                 newLockIds.Add(lockId);
 
                 // Add to response items
@@ -792,8 +742,9 @@ public class QueueActor : Actor, IQueueActor, IRemindable
                 };
             }
 
-            // Save all state atomically
-            await StateManager.SetStateAsync("_lock_registry", registry);
+            // Save all state atomically - increment lock counter
+            int currentCount = lockCount.HasValue ? lockCount.Value : 0;
+            await StateManager.SetStateAsync("_lock_count", currentCount + lockedItems.Count);
             await StateManager.SaveStateAsync();
 
             // Register reminders for auto-expiry (gracefully degrades if scheduler unavailable)
@@ -857,41 +808,28 @@ public class QueueActor : Actor, IQueueActor, IRemindable
 
             string lockId = request.LockId;
 
-            // Get lock registry
-            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
-            if (!lockRegistry.HasValue || !lockRegistry.Value.Contains(lockId))
-            {
-                return new AcknowledgeResponse
-                {
-                    Success = false,
-                    Message = "Lock not found in registry",
-                    ErrorCode = "LOCK_NOT_FOUND"
-                };
-            }
-
             // Get lock state
             var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
             if (!lockState.HasValue)
             {
-                // Lock ID in registry but lock state doesn't exist - clean up
-                var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
-                await StateManager.SetStateAsync("_lock_registry", registry);
-                await StateManager.SaveStateAsync();
-
                 return new AcknowledgeResponse
                 {
                     Success = false,
-                    Message = "Lock state not found",
+                    Message = "Lock not found",
                     ErrorCode = "LOCK_NOT_FOUND"
                 };
             }
 
             // Note: Item already dequeued during PopWithAck - just remove lock state
-            // Remove lock and update registry
+            // Remove lock and decrement counter
             await StateManager.RemoveStateAsync($"{lockId}-lock");
 
-            var updatedRegistry = lockRegistry.Value.Where(id => id != lockId).ToList();
-            await StateManager.SetStateAsync("_lock_registry", updatedRegistry);
+            var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
+            if (lockCount.HasValue && lockCount.Value > 0)
+            {
+                await StateManager.SetStateAsync("_lock_count", lockCount.Value - 1);
+            }
+
             await StateManager.SaveStateAsync();
 
             // Unregister reminder (best effort - may not exist if scheduler unavailable)
@@ -957,34 +895,16 @@ public class QueueActor : Actor, IQueueActor, IRemindable
 
             string lockId = request.LockId;
 
-            // Get lock registry
-            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
-            if (!lockRegistry.HasValue || !lockRegistry.Value.Contains(lockId))
-            {
-                return new ExtendLockResponse
-                {
-                    Success = false,
-                    NewExpiresAt = 0,
-                    ErrorCode = "LOCK_NOT_FOUND",
-                    ErrorMessage = "Lock not found in registry"
-                };
-            }
-
             // Get lock state
             var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
             if (!lockState.HasValue)
             {
-                // Lock ID in registry but lock state doesn't exist - clean up
-                var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
-                await StateManager.SetStateAsync("_lock_registry", registry);
-                await StateManager.SaveStateAsync();
-
                 return new ExtendLockResponse
                 {
                     Success = false,
                     NewExpiresAt = 0,
                     ErrorCode = "LOCK_NOT_FOUND",
-                    ErrorMessage = "Lock state not found"
+                    ErrorMessage = "Lock not found"
                 };
             }
 
@@ -1079,46 +999,15 @@ public class QueueActor : Actor, IQueueActor, IRemindable
 
             string lockId = request.LockId;
 
-            // Check registry first
-            var lockRegistry = await StateManager.TryGetStateAsync<List<string>>("_lock_registry");
-
-            // If lock not in registry, distinguish between "not found" vs "invalid"
-            if (!lockRegistry.HasValue || !lockRegistry.Value.Contains(lockId))
+            // Get lock state
+            var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
+            if (!lockState.HasValue)
             {
-                // If registry has other locks, this lock ID is invalid for this queue
-                if (lockRegistry.HasValue && lockRegistry.Value.Count > 0)
-                {
-                    return new DeadLetterResponse
-                    {
-                        Status = "ERROR",
-                        ErrorCode = "INVALID_LOCK_ID",
-                        Message = "Invalid lock_id provided"
-                    };
-                }
-
-                // If no locks exist, it's simply not found
                 return new DeadLetterResponse
                 {
                     Status = "ERROR",
                     ErrorCode = "LOCK_NOT_FOUND",
                     Message = "Lock not found"
-                };
-            }
-
-            // Get lock state
-            var lockState = await StateManager.TryGetStateAsync<LockState>($"{lockId}-lock");
-            if (!lockState.HasValue)
-            {
-                // Lock in registry but state missing - clean up and return not found
-                var registry = lockRegistry.Value.Where(id => id != lockId).ToList();
-                await StateManager.SetStateAsync("_lock_registry", registry);
-                await StateManager.SaveStateAsync();
-
-                return new DeadLetterResponse
-                {
-                    Status = "ERROR",
-                    ErrorCode = "LOCK_NOT_FOUND",
-                    Message = "Lock state not found"
                 };
             }
 
@@ -1170,11 +1059,15 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             }
 
             // Successfully pushed to DLQ - item already removed from main queue during PopWithAck
-            // Remove lock and update registry
+            // Remove lock and decrement counter
             await StateManager.RemoveStateAsync($"{lockId}-lock");
 
-            var updatedRegistry = lockRegistry.Value.Where(id => id != lockId).ToList();
-            await StateManager.SetStateAsync("_lock_registry", updatedRegistry);
+            var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
+            if (lockCount.HasValue && lockCount.Value > 0)
+            {
+                await StateManager.SetStateAsync("_lock_count", lockCount.Value - 1);
+            }
+
             await StateManager.SaveStateAsync();
 
             return new DeadLetterResponse
