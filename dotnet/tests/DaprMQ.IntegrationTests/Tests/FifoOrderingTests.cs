@@ -11,7 +11,7 @@ public class FifoOrderingTests(DaprTestFixture fixture)
 {
 
     [Fact]
-    public async Task Push10Items_PopAll_ReturnsInCorrectFifoOrder()
+    public async Task Push10Items_BulkPop_ReturnsInCorrectFifoOrder()
     {
         // Arrange - Push 10 items with sequential IDs
         var expectedIds = new List<int>();
@@ -30,29 +30,26 @@ public class FifoOrderingTests(DaprTestFixture fixture)
             expectedIds.Add(i);
         }
 
-        // Act - Pop all 10 items (actors initialize synchronously on first operation)
-        var actualIds = new List<int>();
-        for (int i = 0; i < 10; i++)
-        {
-            var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
-            request.Headers.Add("require_ack", "false");
-            var response = await fixture.ApiClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+        // Act - Bulk pop all 10 items
+        var popRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+        popRequest.Headers.Add("count", "10");
+        var popResponse = await fixture.ApiClient.SendAsync(popRequest);
+        popResponse.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
-            Assert.NotNull(result);
-            Assert.NotNull(result.Item);
+        var result = await popResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
+        Assert.NotNull(result);
+        Assert.NotNull(result.Items);
+        Assert.Equal(10, result.Items.Count);
 
-            var item = (JsonElement)result.Item;
-            actualIds.Add(item.GetProperty("id").GetInt32());
-        }
+        var actualIds = result.Items.Select(popItem =>
+            ((JsonElement)popItem.Item).GetProperty("id").GetInt32()).ToList();
 
         // Assert - Verify FIFO ordering
         Assert.Equal(expectedIds, actualIds);
     }
 
     [Fact]
-    public async Task Push100Items_PopAll_ReturnsInCorrectFifoOrder()
+    public async Task Push100Items_BulkPop_ReturnsInCorrectFifoOrder()
     {
         // Arrange - Push 100 items with sequential IDs
         var expectedIds = new List<int>();
@@ -70,28 +67,22 @@ public class FifoOrderingTests(DaprTestFixture fixture)
             expectedIds.Add(i);
         }
 
-        // Act - Pop all 100 items
-        var actualIds = new List<int>();
-        for (int i = 0; i < 100; i++)
-        {
-            var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
-            request.Headers.Add("require_ack", "false");
-            var response = await fixture.ApiClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+        // Act - Bulk pop all 100 items (test max count)
+        var popRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+        popRequest.Headers.Add("count", "100");
+        var popResponse = await fixture.ApiClient.SendAsync(popRequest);
+        popResponse.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
-            Assert.NotNull(result);
-            Assert.NotNull(result.Item);
+        var result = await popResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
+        Assert.NotNull(result);
+        Assert.NotNull(result.Items);
+        Assert.Equal(100, result.Items.Count);
 
-            var item = (JsonElement)result.Item;
-            actualIds.Add(item.GetProperty("id").GetInt32());
-        }
+        var actualIds = result.Items.Select(popItem =>
+            ((JsonElement)popItem.Item).GetProperty("id").GetInt32()).ToList();
 
         // Assert - Verify FIFO ordering
         Assert.Equal(expectedIds, actualIds);
-
-        // Also verify via Dapr Actor HTTP API that queue is empty
-        // Note: ActorMetadata check would require deserializing the internal state structure
     }
 
     [Fact]
@@ -134,14 +125,15 @@ public class FifoOrderingTests(DaprTestFixture fixture)
 
         // Assert
         Assert.NotNull(firstResult);
-        Assert.NotNull(firstResult.Item);
+        Assert.NotNull(firstResult.Items);
+        Assert.Single(firstResult.Items);
 
         // Second pop should return 204 No Content for empty queue
         Assert.Equal(HttpStatusCode.NoContent, secondPop.StatusCode);
     }
 
     [Fact]
-    public async Task Push300Items_PopAll_VerifiesOffloadLoadCycle_MaintainsFifoOrder()
+    public async Task Push300Items_BulkPop_VerifiesOffloadLoadCycle_MaintainsFifoOrder()
     {
         // This test validates the byte[] serialization optimization for offload/load
         // With 300 items and default buffer_segments=1, segments beyond the buffer zone
@@ -164,21 +156,23 @@ public class FifoOrderingTests(DaprTestFixture fixture)
             expectedIds.Add(i);
         }
 
-        // Act - Pop all 300 items (will trigger segment loading from external store)
+        // Act - Bulk pop in batches (3 batches of 100 to test segment loading)
         var actualIds = new List<int>();
-        for (int i = 0; i < 300; i++)
+        for (int batch = 0; batch < 3; batch++)
         {
-            var request = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
-            request.Headers.Add("require_ack", "false");
-            var response = await fixture.ApiClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
+            var popRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
+            popRequest.Headers.Add("count", "100");
+            var popResponse = await fixture.ApiClient.SendAsync(popRequest);
+            popResponse.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<ApiPopResponse>();
+            var result = await popResponse.Content.ReadFromJsonAsync<ApiPopResponse>();
             Assert.NotNull(result);
-            Assert.NotNull(result.Item);
+            Assert.NotNull(result.Items);
+            Assert.Equal(100, result.Items.Count);
 
-            var item = (JsonElement)result.Item;
-            actualIds.Add(item.GetProperty("id").GetInt32());
+            var batchIds = result.Items.Select(popItem =>
+                ((JsonElement)popItem.Item).GetProperty("id").GetInt32()).ToList();
+            actualIds.AddRange(batchIds);
         }
 
         // Assert - Verify FIFO ordering maintained through offload/load cycle
@@ -186,7 +180,6 @@ public class FifoOrderingTests(DaprTestFixture fixture)
 
         // Verify queue is now empty
         var emptyPopRequest = new HttpRequestMessage(HttpMethod.Post, $"/queue/{fixture.QueueId}/pop");
-        emptyPopRequest.Headers.Add("require_ack", "false");
         var emptyPopResponse = await fixture.ApiClient.SendAsync(emptyPopRequest);
         Assert.Equal(HttpStatusCode.NoContent, emptyPopResponse.StatusCode);
     }

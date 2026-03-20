@@ -8,7 +8,7 @@ interface LockInfoProps {
 }
 
 export const LockInfo = ({ message, onAcknowledge, onDeadLetter }: LockInfoProps) => {
-  const { lockId, lockExpiresAt, acknowledged, deadLettered, dlqActorId } = message;
+  const { lockId, lockExpiresAt, acknowledged, deadLettered, dlqId } = message;
 
   if (!lockId) return null;
 
@@ -26,12 +26,12 @@ export const LockInfo = ({ message, onAcknowledge, onDeadLetter }: LockInfoProps
         <div>
           ✕ <strong>Message moved to dead-letter queue </strong>
           <a
-            href={`?queue_name=${dlqActorId}`}
+            href={`?queue_name=${dlqId}`}
             target="_blank"
             rel="noopener noreferrer"
             className={styles.dlqLink}
           >
-            ({dlqActorId})
+            ({dlqId})
           </a>
         </div>
       ) : (

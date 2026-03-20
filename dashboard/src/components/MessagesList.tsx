@@ -8,19 +8,23 @@ interface MessagesListProps {
 }
 
 export const MessagesList = ({ messages, onAcknowledge, onDeadLetter }: MessagesListProps) => {
-  if (messages.length === 0) return null;
-
   return (
     <div className="card">
       <h3>Popped Messages ({messages.length})</h3>
-      {messages.map((msg, index) => (
-        <MessageItem
-          key={index}
-          message={msg}
-          onAcknowledge={() => msg.lockId && onAcknowledge(msg.lockId, index)}
-          onDeadLetter={() => msg.lockId && onDeadLetter(msg.lockId, index)}
-        />
-      ))}
+      {messages.length === 0 ? (
+        <p style={{ fontSize: '0.9em', color: '#666', fontStyle: 'italic' }}>
+          No messages popped yet
+        </p>
+      ) : (
+        messages.map((msg, index) => (
+          <MessageItem
+            key={index}
+            message={msg}
+            onAcknowledge={() => msg.lockId && onAcknowledge(msg.lockId, index)}
+            onDeadLetter={() => msg.lockId && onDeadLetter(msg.lockId, index)}
+          />
+        ))
+      )}
     </div>
   );
 };

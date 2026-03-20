@@ -84,9 +84,10 @@ public class DaprMQGrpcServiceTests
     {
         // Arrange
         var mockInvoker = new Mock<ActorModels.IActorInvoker>();
-        mockInvoker.Setup(i => i.InvokeMethodAsync<ActorModels.PopResponse>(
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ActorModels.PopRequest, ActorModels.PopResponse>(
                 It.IsAny<ActorId>(),
                 It.IsAny<string>(),
+                It.IsAny<ActorModels.PopRequest>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ActorModels.PopResponse { IsEmpty = true, Message = "Queue is empty" });
 
@@ -106,9 +107,10 @@ public class DaprMQGrpcServiceTests
     {
         // Arrange
         var mockInvoker = new Mock<ActorModels.IActorInvoker>();
-        mockInvoker.Setup(i => i.InvokeMethodAsync<ActorModels.PopResponse>(
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ActorModels.PopRequest, ActorModels.PopResponse>(
                 It.IsAny<ActorId>(),
                 It.IsAny<string>(),
+                It.IsAny<ActorModels.PopRequest>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ActorModels.PopResponse
             {
@@ -141,10 +143,17 @@ public class DaprMQGrpcServiceTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ActorModels.PopWithAckResponse
             {
-                ItemJson = "{\"id\":1}",
-                Locked = true,
-                LockId = "test-lock-123",
-                LockExpiresAt = 1234567890.0
+                Items = new List<ActorModels.PopWithAckItem>
+                {
+                    new ActorModels.PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":1}",
+                        Priority = 1,
+                        LockId = "test-lock-123",
+                        LockExpiresAt = 1234567890.0
+                    }
+                },
+                Locked = false
             });
 
         var service = new DaprMQGrpcService(_mockLogger.Object, mockInvoker.Object);
@@ -159,8 +168,9 @@ public class DaprMQGrpcServiceTests
 
         // Assert
         Assert.Equal(ApiServer.Grpc.PopWithAckResponse.ResultOneofCase.Success, response.ResultCase);
-        Assert.Equal("test-lock-123", response.Success.LockId);
-        Assert.Equal(1234567890.0, response.Success.LockExpiresAt);
+        Assert.Single(response.Success.LockId);
+        Assert.Equal("test-lock-123", response.Success.LockId[0]);
+        Assert.Equal(1234567890.0, response.Success.LockExpiresAt[0]);
     }
 
     [Fact]
@@ -256,7 +266,7 @@ public class DaprMQGrpcServiceTests
     }
 
     [Fact]
-    public async Task DeadLetter_Success_ReturnsDlqActorId()
+    public async Task DeadLetter_Success_ReturnsDlqId()
     {
         // Arrange
         var mockInvoker = new Mock<ActorModels.IActorInvoker>();
@@ -268,7 +278,7 @@ public class DaprMQGrpcServiceTests
             .ReturnsAsync(new ActorModels.DeadLetterResponse
             {
                 Status = "SUCCESS",
-                DlqActorId = "test-queue-deadletter",
+                DlqId = "test-queue-deadletter",
                 Message = "Item moved to dead letter queue"
             });
 
@@ -284,7 +294,7 @@ public class DaprMQGrpcServiceTests
 
         // Assert
         Assert.Equal(ApiServer.Grpc.DeadLetterResponse.ResultOneofCase.Success, response.ResultCase);
-        Assert.Equal("test-queue-deadletter", response.Success.DlqActorId);
+        Assert.Equal("test-queue-deadletter", response.Success.DlqId);
     }
 
     [Fact]
@@ -375,5 +385,136 @@ public class DaprMQGrpcServiceTests
         var ex = await Assert.ThrowsAsync<RpcException>(async () =>
             await service.DeadLetter(request, _mockContext.Object));
         Assert.Equal(StatusCode.InvalidArgument, ex.StatusCode);
+    }
+
+    // ===== Bulk Pop gRPC Tests =====
+
+    /// <summary>
+    /// This test verifies gRPC Pop with count parameter returns repeated fields.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Items=[item1, item2, item3]
+    /// - gRPC should return: Success with repeated item_json and priority arrays
+    /// </summary>
+    [Fact]
+    public async Task Pop_WithCount_ReturnsRepeatedFields()
+    {
+        // Arrange
+        var mockInvoker = new Mock<ActorModels.IActorInvoker>();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ActorModels.PopRequest, ActorModels.PopResponse>(
+                It.IsAny<ActorId>(),
+                It.IsAny<string>(),
+                It.IsAny<ActorModels.PopRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ActorModels.PopResponse
+            {
+                Items = new List<ActorModels.PopItem>
+                {
+                    new ActorModels.PopItem { ItemJson = "{\"id\":1}", Priority = 1 },
+                    new ActorModels.PopItem { ItemJson = "{\"id\":2}", Priority = 1 },
+                    new ActorModels.PopItem { ItemJson = "{\"id\":3}", Priority = 0 }
+                },
+                Locked = false,
+                IsEmpty = false
+            });
+
+        var service = new DaprMQGrpcService(_mockLogger.Object, mockInvoker.Object);
+        var request = new ApiServer.Grpc.PopRequest
+        {
+            QueueId = "test-queue",
+            Count = 3
+        };
+
+        // Act
+        var response = await service.Pop(request, _mockContext.Object);
+
+        // Assert - Should return Success with repeated fields
+        Assert.Equal(ApiServer.Grpc.PopResponse.ResultOneofCase.Success, response.ResultCase);
+        Assert.NotNull(response.Success);
+        Assert.Equal(3, response.Success.ItemJson.Count);
+        Assert.Equal(3, response.Success.Priority.Count);
+        Assert.Equal("{\"id\":1}", response.Success.ItemJson[0]);
+        Assert.Equal("{\"id\":2}", response.Success.ItemJson[1]);
+        Assert.Equal("{\"id\":3}", response.Success.ItemJson[2]);
+        Assert.Equal(1, response.Success.Priority[0]);
+        Assert.Equal(1, response.Success.Priority[1]);
+        Assert.Equal(0, response.Success.Priority[2]);
+    }
+
+    /// <summary>
+    /// This test verifies gRPC PopWithAck with count parameter returns repeated lock fields.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Items=[item1, item2, item3] with lock IDs
+    /// - gRPC should return: Success with repeated item_json, priority, lock_id, lock_expires_at arrays
+    /// </summary>
+    [Fact]
+    public async Task PopWithAck_WithCount_ReturnsRepeatedLockFields()
+    {
+        // Arrange
+        var mockInvoker = new Mock<ActorModels.IActorInvoker>();
+        var expiresAt = 1234567890.0;
+        mockInvoker.Setup(i => i.InvokeMethodAsync<ActorModels.PopWithAckRequest, ActorModels.PopWithAckResponse>(
+                It.IsAny<ActorId>(),
+                It.IsAny<string>(),
+                It.IsAny<ActorModels.PopWithAckRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ActorModels.PopWithAckResponse
+            {
+                Items = new List<ActorModels.PopWithAckItem>
+                {
+                    new ActorModels.PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":1}",
+                        Priority = 1,
+                        LockId = "lock-1",
+                        LockExpiresAt = expiresAt
+                    },
+                    new ActorModels.PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":2}",
+                        Priority = 1,
+                        LockId = "lock-2",
+                        LockExpiresAt = expiresAt + 1
+                    },
+                    new ActorModels.PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":3}",
+                        Priority = 0,
+                        LockId = "lock-3",
+                        LockExpiresAt = expiresAt + 2
+                    }
+                },
+                Locked = false,
+                IsEmpty = false
+            });
+
+        var service = new DaprMQGrpcService(_mockLogger.Object, mockInvoker.Object);
+        var request = new ApiServer.Grpc.PopWithAckRequest
+        {
+            QueueId = "test-queue",
+            TtlSeconds = 30,
+            Count = 3
+        };
+
+        // Act
+        var response = await service.PopWithAck(request, _mockContext.Object);
+
+        // Assert - Should return Success with repeated fields including lock metadata
+        Assert.Equal(ApiServer.Grpc.PopWithAckResponse.ResultOneofCase.Success, response.ResultCase);
+        Assert.NotNull(response.Success);
+        Assert.Equal(3, response.Success.ItemJson.Count);
+        Assert.Equal(3, response.Success.Priority.Count);
+        Assert.Equal(3, response.Success.LockId.Count);
+        Assert.Equal(3, response.Success.LockExpiresAt.Count);
+        Assert.Equal("{\"id\":1}", response.Success.ItemJson[0]);
+        Assert.Equal("{\"id\":2}", response.Success.ItemJson[1]);
+        Assert.Equal("{\"id\":3}", response.Success.ItemJson[2]);
+        Assert.Equal("lock-1", response.Success.LockId[0]);
+        Assert.Equal("lock-2", response.Success.LockId[1]);
+        Assert.Equal("lock-3", response.Success.LockId[2]);
+        Assert.Equal(expiresAt, response.Success.LockExpiresAt[0]);
+        Assert.Equal(expiresAt + 1, response.Success.LockExpiresAt[1]);
+        Assert.Equal(expiresAt + 2, response.Success.LockExpiresAt[2]);
     }
 }

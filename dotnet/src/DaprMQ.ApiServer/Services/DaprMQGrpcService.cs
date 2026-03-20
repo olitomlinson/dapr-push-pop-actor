@@ -94,13 +94,23 @@ public class DaprMQGrpcService : Grpc.DaprMQ.DaprMQBase
     {
         try
         {
-            _logger.LogDebug($"gRPC Pop request for queue {request.QueueId}");
+            // Count=0 means use default (protobuf default value)
+            int count = request.Count > 0 ? request.Count : 1;
+
+            // Validate count is not over max (0 is allowed as default)
+            if (request.Count > 100)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "Count must be between 1 and 100"));
+            }
+
+            _logger.LogDebug($"gRPC Pop request for queue {request.QueueId}, count={count}");
 
             var actorId = new ActorId(request.QueueId);
 
-            var result = await _actorInvoker.InvokeMethodAsync<ActorModels.PopResponse>(
+            var result = await _actorInvoker.InvokeMethodAsync<ActorModels.PopRequest, ActorModels.PopResponse>(
                 actorId,
                 ActorMethodNames.Pop,
+                new ActorModels.PopRequest { Count = count },
                 context.CancellationToken);
 
             if (result.IsEmpty)
@@ -123,14 +133,31 @@ public class DaprMQGrpcService : Grpc.DaprMQ.DaprMQBase
                 };
             }
 
+            // Return items array
+            if (result.Items.Count > 0)
+            {
+                var popSuccess = new PopSuccess();
+                foreach (var item in result.Items)
+                {
+                    popSuccess.ItemJson.Add(item.ItemJson);
+                    popSuccess.Priority.Add(item.Priority);
+                }
+
+                return new PopResponse
+                {
+                    Success = popSuccess
+                };
+            }
+
+            // Should not reach here but handle gracefully
             return new PopResponse
             {
-                Success = new PopSuccess
-                {
-                    ItemJson = result.ItemJson ?? "",
-                    Priority = result.Priority ?? 1
-                }
+                Empty = new PopEmpty { Message = "No items available" }
             };
+        }
+        catch (RpcException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -143,7 +170,16 @@ public class DaprMQGrpcService : Grpc.DaprMQ.DaprMQBase
     {
         try
         {
-            _logger.LogDebug($"gRPC PopWithAck request for queue {request.QueueId}, ttl={request.TtlSeconds}s");
+            // Count=0 means use default (protobuf default value)
+            int count = request.Count > 0 ? request.Count : 1;
+
+            // Validate count is not over max (0 is allowed as default)
+            if (request.Count > 100)
+            {
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "Count must be between 1 and 100"));
+            }
+
+            _logger.LogDebug($"gRPC PopWithAck request for queue {request.QueueId}, ttl={request.TtlSeconds}s, allow_competing_consumers={request.AllowCompetingConsumers}, count={count}");
 
             var actorId = new ActorId(request.QueueId);
 
@@ -152,7 +188,9 @@ public class DaprMQGrpcService : Grpc.DaprMQ.DaprMQBase
                 ActorMethodNames.PopWithAck,
                 new ActorModels.PopWithAckRequest
                 {
-                    TtlSeconds = request.TtlSeconds > 0 ? request.TtlSeconds : 30
+                    TtlSeconds = request.TtlSeconds > 0 ? request.TtlSeconds : 30,
+                    Count = count,
+                    AllowCompetingConsumers = request.AllowCompetingConsumers
                 },
                 context.CancellationToken);
 
@@ -164,8 +202,8 @@ public class DaprMQGrpcService : Grpc.DaprMQ.DaprMQBase
                 };
             }
 
-            // Check if already locked (Locked=true but no LockId means it was already locked by another consumer)
-            if (result.Locked && result.LockId == null)
+            // Check if already locked (Locked=true but no items means it was already locked by another consumer)
+            if (result.Locked && result.Items.Count == 0)
             {
                 return new PopWithAckResponse
                 {
@@ -177,17 +215,33 @@ public class DaprMQGrpcService : Grpc.DaprMQ.DaprMQBase
                 };
             }
 
-            // Success - lock created (Locked=true AND LockId is present)
+            // Success - locks created
+            if (result.Items.Count > 0)
+            {
+                var popSuccess = new PopWithAckSuccess();
+                foreach (var item in result.Items)
+                {
+                    popSuccess.ItemJson.Add(item.ItemJson);
+                    popSuccess.Priority.Add(item.Priority);
+                    popSuccess.LockId.Add(item.LockId);
+                    popSuccess.LockExpiresAt.Add(item.LockExpiresAt);
+                }
+
+                return new PopWithAckResponse
+                {
+                    Success = popSuccess
+                };
+            }
+
+            // Should not reach here but handle gracefully
             return new PopWithAckResponse
             {
-                Success = new PopWithAckSuccess
-                {
-                    ItemJson = result.ItemJson ?? "",
-                    LockId = result.LockId ?? "",
-                    LockExpiresAt = result.LockExpiresAt ?? 0,
-                    Priority = result.Priority ?? 1
-                }
+                Empty = new PopEmpty { Message = "No items available" }
             };
+        }
+        catch (RpcException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -329,7 +383,7 @@ public class DaprMQGrpcService : Grpc.DaprMQ.DaprMQBase
             {
                 Success = new DeadLetterSuccess
                 {
-                    DlqActorId = result.DlqActorId ?? ""
+                    DlqId = result.DlqId ?? ""
                 }
             };
         }

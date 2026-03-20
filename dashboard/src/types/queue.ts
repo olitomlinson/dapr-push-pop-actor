@@ -8,12 +8,17 @@ export interface PushRequest {
   items: PushItem[];
 }
 
-export interface PopResponse {
+export interface PopResponseItem {
   item: unknown;
   priority?: number;
-  locked?: boolean;
   lockId?: string;
   lockExpiresAt?: number;
+}
+
+export interface PopResponse {
+  items: PopResponseItem[];
+  locked?: boolean;
+  message?: string;
 }
 
 export interface AcknowledgeRequest {
@@ -25,7 +30,7 @@ export interface DeadLetterRequest {
 }
 
 export interface DeadLetterResponse {
-  dlqActorId: string;
+  dlqId: string;
 }
 
 // UI state types
@@ -37,7 +42,7 @@ export interface PoppedMessage {
   lockExpiresAt?: number;
   acknowledged?: boolean;
   deadLettered?: boolean;
-  dlqActorId?: string;
+  dlqId?: string;
 }
 
 export interface ApiError {

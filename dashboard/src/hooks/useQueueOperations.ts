@@ -38,18 +38,22 @@ export const useQueueOperations = (queueId: string) => {
     }
   };
 
-  const popMessage = async () => {
+  const popMessage = async (count: number = 1) => {
     setIsPopping(true);
     try {
-      const data = await queueApi.pop(queueId);
+      const data = await queueApi.pop(queueId, count);
       if (data === null) {
         alert('Queue is empty');
       } else {
-        setMessagesPopped(prev => prev + 1);
-        setPoppedMessages(prev => [{
-          item: data.item,
-          priority: data.priority
-        }, ...prev]);
+        const newMessages = data.items.map((responseItem) => ({
+          item: responseItem.item,
+          priority: responseItem.priority,
+          locked: responseItem.lockId ? true : false,
+          lockId: responseItem.lockId,
+          lockExpiresAt: responseItem.lockExpiresAt,
+        }));
+        setMessagesPopped(prev => prev + data.items.length);
+        setPoppedMessages(prev => [...newMessages, ...prev]);
       }
     } catch (err) {
       if (err instanceof QueueApiError) {
@@ -62,21 +66,22 @@ export const useQueueOperations = (queueId: string) => {
     }
   };
 
-  const popWithAck = async () => {
+  const popWithAck = async (count: number = 1, ttl: number = 30, competing: boolean = false) => {
     setIsPopping(true);
     try {
-      const data = await queueApi.popWithAck(queueId);
+      const data = await queueApi.popWithAck(queueId, count, ttl, competing);
       if (data === null) {
         alert('Queue is empty');
       } else {
-        setMessagesPopped(prev => prev + 1);
-        setPoppedMessages(prev => [{
-          item: data.item,
-          priority: data.priority,
-          locked: data.locked,
-          lockId: data.lockId,
-          lockExpiresAt: data.lockExpiresAt,
-        }, ...prev]);
+        const newMessages = data.items.map((responseItem) => ({
+          item: responseItem.item,
+          priority: responseItem.priority,
+          locked: responseItem.lockId ? true : false,
+          lockId: responseItem.lockId,
+          lockExpiresAt: responseItem.lockExpiresAt,
+        }));
+        setMessagesPopped(prev => prev + data.items.length);
+        setPoppedMessages(prev => [...newMessages, ...prev]);
       }
     } catch (err) {
       if (err instanceof QueueApiError) {
@@ -107,9 +112,9 @@ export const useQueueOperations = (queueId: string) => {
   const deadLetterMessage = async (lockId: string, index: number) => {
     try {
       const data = await queueApi.deadLetter(queueId, { lockId });
-      const dlqName = data.dlqActorId || `${queueId}-deadletter`;
+      const dlqName = data.dlqId || `${queueId}-deadletter`;
       setPoppedMessages(prev => prev.map((msg, i) =>
-        i === index ? { ...msg, deadLettered: true, dlqActorId: dlqName } : msg
+        i === index ? { ...msg, deadLettered: true, dlqId: dlqName } : msg
       ));
     } catch (err) {
       if (err instanceof QueueApiError) {

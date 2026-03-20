@@ -15,10 +15,11 @@ public interface IQueueActor : IActor
     Task<PushResponse> Push(PushRequest request);
 
     /// <summary>
-    /// Pop a single item from the queue (FIFO, lowest priority first).
+    /// Pop one or more items from the queue (FIFO, lowest priority first).
     /// </summary>
+    /// <param name="request">Pop request containing count (default: 1, max: 100)</param>
     /// <returns>Pop response with items as JSON strings</returns>
-    Task<PopResponse> Pop();
+    Task<PopResponse> Pop(PopRequest request);
 
     /// <summary>
     /// Pop items with acknowledgement requirement (creates a lock).

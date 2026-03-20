@@ -191,10 +191,17 @@ public class QueueControllerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PopWithAckResponse
             {
-                ItemJson = "{\"id\":1}",
-                Locked = true,  // Successfully created lock
-                LockId = "test-lock-123",  // Lock ID present - this is the KEY difference!
-                LockExpiresAt = DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds(),
+                Items = new List<PopWithAckItem>
+                {
+                    new PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":1}",
+                        Priority = 1,
+                        LockId = "test-lock-123",
+                        LockExpiresAt = DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds()
+                    }
+                },
+                Locked = false,  // Successfully created lock (not blocked)
                 IsEmpty = false,
                 Message = "Item locked with ID test-lock-123"
             });
@@ -207,9 +214,10 @@ public class QueueControllerTests
         // Assert - Should return HTTP 200 OK (NOT 423!)
         var okResult = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsType<ApiPopWithAckResponse>(okResult.Value);
-        Assert.True(response.Locked);
-        Assert.NotNull(response.LockId);
-        Assert.Equal("test-lock-123", response.LockId);
+        Assert.NotNull(response.Items);
+        Assert.Single(response.Items);
+        Assert.Equal("test-lock-123", response.Items[0].LockId);
+        Assert.Equal(1, response.Items[0].Priority);
     }
 
     /// <summary>
@@ -231,10 +239,8 @@ public class QueueControllerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PopWithAckResponse
             {
-                ItemJson = null,
+                Items = new List<PopWithAckItem>(),  // Empty - no items returned when locked
                 Locked = true,  // Already locked by another operation
-                LockId = null,  // No Lock ID - KEY difference from successful lock!
-                LockExpiresAt = DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds(),
                 IsEmpty = false,
                 Message = "Queue is locked by another operation"
             });
@@ -270,7 +276,7 @@ public class QueueControllerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PopWithAckResponse
             {
-                ItemJson = null,
+                Items = new List<PopWithAckItem>(),  // Empty - queue is empty
                 Locked = false,
                 IsEmpty = true,
                 Message = "Queue is empty"
@@ -289,7 +295,7 @@ public class QueueControllerTests
     /// This test verifies the expected behavior for regular Pop when queue is locked.
     ///
     /// Expected behavior:
-    /// - Actor returns: Locked=true, ItemJson=null
+    /// - Actor returns: Locked=true, Items=[]
     /// - Controller should return: HTTP 423 Locked
     /// </summary>
     [Fact]
@@ -297,13 +303,14 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        mockInvoker.Setup(i => i.InvokeMethodAsync<PopResponse>(
+        mockInvoker.Setup(i => i.InvokeMethodAsync<PopRequest, PopResponse>(
                 It.IsAny<ActorId>(),
                 "Pop",
+                It.IsAny<PopRequest>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PopResponse
             {
-                ItemJson = null,
+                Items = new List<PopItem>(),
                 Locked = true,
                 IsEmpty = false,
                 Message = "Queue is locked by another operation",
@@ -324,7 +331,7 @@ public class QueueControllerTests
     /// This test verifies the expected behavior for regular Pop when successful.
     ///
     /// Expected behavior:
-    /// - Actor returns: ItemJson="...", Locked=false, IsEmpty=false
+    /// - Actor returns: Items=[{ItemJson="...", Priority=1}], Locked=false, IsEmpty=false
     /// - Controller should return: HTTP 200 OK with ApiPopResponse
     /// </summary>
     [Fact]
@@ -332,13 +339,17 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        mockInvoker.Setup(i => i.InvokeMethodAsync<PopResponse>(
+        mockInvoker.Setup(i => i.InvokeMethodAsync<PopRequest, PopResponse>(
                 It.IsAny<ActorId>(),
                 "Pop",
+                It.IsAny<PopRequest>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PopResponse
             {
-                ItemJson = "{\"id\":1}",
+                Items = new List<PopItem>
+                {
+                    new PopItem { ItemJson = "{\"id\":1}", Priority = 1 }
+                },
                 Locked = false,
                 IsEmpty = false
             });
@@ -351,7 +362,9 @@ public class QueueControllerTests
         // Assert - Should return HTTP 200 OK
         var okResult = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsType<ApiPopResponse>(okResult.Value);
-        Assert.NotNull(response.Item);
+        Assert.NotNull(response.Items);
+        Assert.Single(response.Items);
+        Assert.Equal(1, response.Items[0].Priority);
     }
 
     /// <summary>
@@ -611,7 +624,7 @@ public class QueueControllerTests
     /// This test verifies the expected behavior for DeadLetter with valid lock.
     ///
     /// Expected behavior:
-    /// - Actor returns: Status="SUCCESS", DlqActorId="queue-id-deadletter"
+    /// - Actor returns: Status="SUCCESS", DlqId="queue-id-deadletter"
     /// - Controller should return: HTTP 200 OK
     /// </summary>
     [Fact]
@@ -627,7 +640,7 @@ public class QueueControllerTests
             .ReturnsAsync(new DeadLetterResponse
             {
                 Status = "SUCCESS",
-                DlqActorId = "test-queue-deadletter",
+                DlqId = "test-queue-deadletter",
                 Message = "Item moved to dead letter queue"
             });
 
@@ -641,7 +654,7 @@ public class QueueControllerTests
         var okResult = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsType<ApiDeadLetterResponse>(okResult.Value);
         Assert.True(response.Success);
-        Assert.Equal("test-queue-deadletter", response.DlqActorId);
+        Assert.Equal("test-queue-deadletter", response.DlqId);
     }
 
     /// <summary>
@@ -745,5 +758,229 @@ public class QueueControllerTests
 
         // Assert - Should return HTTP 400 Bad Request
         Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ===== Bulk Pop Controller Tests =====
+
+    /// <summary>
+    /// This test verifies controller handling of bulk pop with multiple items.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Items=[item1, item2, item3]
+    /// - Controller should return: HTTP 200 OK with multiple items
+    /// </summary>
+    [Fact]
+    public async Task Pop_BulkWithMultipleItems_Returns200()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<PopRequest, PopResponse>(
+                It.IsAny<ActorId>(),
+                "Pop",
+                It.IsAny<PopRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PopResponse
+            {
+                Items = new List<PopItem>
+                {
+                    new PopItem { ItemJson = "{\"id\":1}", Priority = 1 },
+                    new PopItem { ItemJson = "{\"id\":2}", Priority = 1 },
+                    new PopItem { ItemJson = "{\"id\":3}", Priority = 1 }
+                },
+                Locked = false,
+                IsEmpty = false
+            });
+
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+
+        // Act
+        var result = await controller.Pop("test-queue", require_ack: false, count: 3);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<ApiPopResponse>(okResult.Value);
+        Assert.NotNull(response.Items);
+        Assert.Equal(3, response.Items.Count);
+    }
+
+    /// <summary>
+    /// This test verifies controller validation for count parameter.
+    ///
+    /// Expected behavior:
+    /// - Count exceeds max (100)
+    /// - Controller should return: HTTP 400 Bad Request
+    /// </summary>
+    [Fact]
+    public async Task Pop_CountExceedsMax_Returns400()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+
+        // Act - Request more than 100 items
+        var result = await controller.Pop("test-queue", require_ack: false, count: 101);
+
+        // Assert - Should return HTTP 400 Bad Request
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    /// <summary>
+    /// This test verifies controller validation for negative count.
+    ///
+    /// Expected behavior:
+    /// - Count is negative
+    /// - Controller should return: HTTP 400 Bad Request
+    /// </summary>
+    [Fact]
+    public async Task Pop_NegativeCount_Returns400()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+
+        // Act - Request negative count
+        var result = await controller.Pop("test-queue", require_ack: false, count: -1);
+
+        // Assert - Should return HTTP 400 Bad Request
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    /// <summary>
+    /// This test verifies empty queue returns 204 even with bulk pop.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Items=[], IsEmpty=true
+    /// - Controller should return: HTTP 204 No Content
+    /// </summary>
+    [Fact]
+    public async Task Pop_BulkEmptyQueue_Returns204()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<PopRequest, PopResponse>(
+                It.IsAny<ActorId>(),
+                "Pop",
+                It.IsAny<PopRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PopResponse
+            {
+                Items = new List<PopItem>(),
+                Locked = false,
+                IsEmpty = true,
+                Message = "Queue is empty"
+            });
+
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+
+        // Act
+        var result = await controller.Pop("test-queue", require_ack: false, count: 10);
+
+        // Assert - Should return HTTP 204 No Content
+        Assert.IsType<NoContentResult>(result);
+    }
+
+    /// <summary>
+    /// This test verifies locked queue returns 423 even with bulk pop.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Items=[], Locked=true
+    /// - Controller should return: HTTP 423 Locked
+    /// </summary>
+    [Fact]
+    public async Task Pop_BulkLockedQueue_Returns423()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<PopRequest, PopResponse>(
+                It.IsAny<ActorId>(),
+                "Pop",
+                It.IsAny<PopRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PopResponse
+            {
+                Items = new List<PopItem>(),
+                Locked = true,
+                IsEmpty = false,
+                Message = "Queue is locked by another operation",
+                LockExpiresAt = DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds()
+            });
+
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+
+        // Act
+        var result = await controller.Pop("test-queue", require_ack: false, count: 5);
+
+        // Assert - Should return HTTP 423 Locked
+        var statusCodeResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(423, statusCodeResult.StatusCode);
+    }
+
+    /// <summary>
+    /// This test verifies PopWithAck with count parameter returns multiple items with lock IDs.
+    ///
+    /// Expected behavior:
+    /// - Actor returns: Items=[item1, item2, item3] with lock IDs
+    /// - Controller should return: HTTP 200 OK with multiple items and lock metadata
+    /// </summary>
+    [Fact]
+    public async Task PopWithAck_WithCount_ReturnsArrayWithLockIds()
+    {
+        // Arrange
+        var mockInvoker = new Mock<IActorInvoker>();
+        var expiresAt = DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds();
+        mockInvoker.Setup(i => i.InvokeMethodAsync<PopWithAckRequest, PopWithAckResponse>(
+                It.IsAny<ActorId>(),
+                "PopWithAck",
+                It.IsAny<PopWithAckRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PopWithAckResponse
+            {
+                Items = new List<PopWithAckItem>
+                {
+                    new PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":1}",
+                        Priority = 1,
+                        LockId = "lock-1",
+                        LockExpiresAt = expiresAt
+                    },
+                    new PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":2}",
+                        Priority = 1,
+                        LockId = "lock-2",
+                        LockExpiresAt = expiresAt
+                    },
+                    new PopWithAckItem
+                    {
+                        ItemJson = "{\"id\":3}",
+                        Priority = 0,
+                        LockId = "lock-3",
+                        LockExpiresAt = expiresAt
+                    }
+                },
+                Locked = false,
+                IsEmpty = false,
+                Message = "Items locked"
+            });
+
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+
+        // Act
+        var result = await controller.Pop("test-queue", require_ack: true, ttl_seconds: 30, count: 3);
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<ApiPopWithAckResponse>(okResult.Value);
+
+        // Verify we got Items array with lock IDs
+        Assert.NotNull(response.Items);
+        Assert.Equal(3, response.Items.Count);
+        Assert.Equal("lock-1", response.Items[0].LockId);
+        Assert.Equal("lock-2", response.Items[1].LockId);
+        Assert.Equal("lock-3", response.Items[2].LockId);
+        Assert.Equal(1, response.Items[0].Priority);
+        Assert.Equal(1, response.Items[1].Priority);
+        Assert.Equal(0, response.Items[2].Priority);
     }
 }
