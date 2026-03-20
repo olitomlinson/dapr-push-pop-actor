@@ -1,6 +1,8 @@
 # DaprMQ
 
-A simple, queue implementation. Store and retrieve JSON-payloads of any size. Chose from either gauranteed FIFO consumers, or competing consumers (Best efforts FIFO)
+- A simple queue implementation. 
+- Store and retrieve JSON-payloads of any size. 
+- Choose from either gauranteed FIFO consumers, or competing consumers (FIFO not gauranteed!)
 
 ## Quick Start
 
@@ -36,11 +38,29 @@ curl -X POST http://localhost:8000/queue/my-queue/push \
 
 # Pop a message...
 curl -X POST "http://localhost:8000/queue/my-queue/pop"
-# response : { "item": { "task": "second"}, "priority": 0 }
+# {
+#  "items": [
+#    {
+#      "item": {
+#        "task": "second"
+#      },
+#      "priority": 0
+#    }
+#  ]
+# }
 
 # Pop a message...
 curl -X POST "http://localhost:8000/queue/my-queue/pop"
-# response : { "item": { "task": "first" }, "priority": 1 }
+# {
+#  "items": [
+#    {
+#      "item": {
+#        "task": "first"
+#      },
+#      "priority": 1
+#    }
+#  ]
+# }
 ```
 
 ### Run integration tests
@@ -55,22 +75,18 @@ curl -X POST "http://localhost:8000/queue/my-queue/pop"
 
 This API provides a ready-to-use queue abstraction:
 
-- **It just works!**: Two methods to get started (`Push`, `Pop`) - that's it.
+- **It just works!**: Two endpoints to get started (`Push`, `Pop`) - that's it.
 - **Priority Support**: Route urgent messages ahead of normal ones (0 = highest priority, default: 1).
 - **Flexible API**: Use via a HTTP API, gRPC API, or direct via Dapr Actor SDK (JavaScript, Python, Java, Dotnet, Go)
 - **Acknowledgements / at-least-once delivery**: Consumers can optionally specify that `Pop` requires a follow-on `Ack` - If the `Ack` is not received within a timeout period, the message is made available at the next `Pop`.
+- **Bulk Push & Bulk Pop**: Atomic operations for pushing and popping many items, for best throughput.
+- **Competing Consumers**: Have many pop operations concurrently in a traditional competing consumer pattern. This requires the use of Acknowledgements. **FIFO is not gauranteed when using competing consumers.**
 - **Dead-lettering**: When using Acknowledgements, you can call `/dead-letter` to move the poison message to a dedicated deadletter queue, allowing subsequent `pop` operations to continue
 - **On-Demand**: Queues are created on-demand at the time of first `Pop` or `Push`, there is no need to create them AOT.
 - **Scalable**: Built on top of Dapr Virtual Actors, giving out-of-the-box High Availability and Horizontal scaling.
 - **Persistent**: Backed by any Dapr state store (PostgreSQL, Redis, Cosmos DB, etc.)
 
 Perfect for task scheduling, message buffering, event sourcing, or any scenario where you need ordered, priority-based processing with strict transactional guarantees.
-
-## What's not in the box?
-
-- **Competing Consumers**: The design goal is to optimise for FIFO, in-order processing of the queue, which, requires a significantly different architectural approach to optimise for a competing consumers model. Competing consumers (such as Service Bus and AWS SNS are) optimised for high-throughput scenarios where competing consumers are the correct implementation. 
-
-- **Pub Sub architecture**: A single message published to a Queue, can't fan out to many independent Subscribers (current limitation, could be addressed in future)
 
 ## Comparing with Kafka at high-level
 
@@ -103,31 +119,32 @@ DaprMQ takes a different approach:
 
 ## Roadmap
 
-### Features
+### Done
 
-As part of driving towards a more feature complete message broker, the following items are intended:
+- [x] **Bulk Push**: Write many messages to a queue in one atomic operation.
+- [x] **Bulk Pop**: Pop many message from a queue in one atomic operation.
+- [x] **Competing Consumers**: Experimental project (requires Bulk Push and Bulk Pop as a pre-requisite)
 
-1. **Multi-tenant API surface**: Ensure all queues operations can be scoped to a first-class `Tenant ID`. Stretch to JWT validation.
-2. **Message Deduplication**: Messages with a non-unique Idempotency Key will be deuplicated within a time-window since first-occurence.
-3. **Fan-Out Architecture**: When publishing to a single queue, it will be possible to fan-out to N other queues. This would form the underpinnings of a real Pub Sub system, whereby Publishers are unaware of Subscribers.
-4. **Optimised large message support**: large messages are already possible, but ideally large messages should not be stored directly in the hot storage tier, but instead offloaded to a binary store (requires Dapr Binary store capability, or similar)
-5. **Queue Purge**: Remove all messages from a queue.
-6. **Max Retries / Automatic Dead-lettering**: When calling Pop With Acknowledgements, if a message is popped N number of times without Acknowledgement, the message will be deemed poisonous, and automatically moved to the Deadletter queue.
-7. **Dead-letter Forwarding**: Send a HTTP notification to any endpoint when a dead-letter message has been produced. Useful for alerting Operators, and triggering automated healing routines that sit external to the system.
-8. **Priority Delete**: Delete a priority sub-queue in one operation.
-9. **Scheduled Enque**: A message can be pushed to the front of any sub-queue, at a future scheduled time (Requires Message Receipts feature)
-10. **Message revocation**: A message can be removed from the queue, regardless of its position (Requires Message Receipts feature)
-11. [x] **Bulk Push**: Write many messages to a queue in one atomic operation.
-12. [x] **Bulk Pop**: Pop many message from a queue in one atomic operation.
-13. **Rate-limit**: Push and Pop operations are protected with a per queue rate-limiter.
-14. **Qoutas**: Queues are governed by Push and Pop qouates per minute/hour/day.
-15. **Queue capacity limit**: Prevent Pushes until queue length drops below a capacity limit.
-16. **Queue reorder functions**: Reorder a queue based on a field within the Json.
-17. **Message functions**: Before a Pop is about to occur, call a HTTP endpoint with the message payload and replace message payload with the HTTP response.
-18. [x] **Competing Consumers**: Experimental project (requires Bulk Push and Bulk Pop as a pre-requisite)~~
-19. **Language SDKs**: Competing Consumers would benefit from language SDKs which implement a gRPC message pump loop. This would allow the SDK to buffer messages and relay them to the applications message handler as push-based model to further increase throughput and reduce latency.
-20. **Message TTL**: After a message has been in the queue for longer than the target ttl, drop it or send it to the dlq.
-21. **Message Receipts**: on successful publish, return a unique receipt id which encodes the segment, and maybe even position
+### To-do
+
+- [ ] **Multi-tenant API surface**: Ensure all queues operations can be scoped to a first-class `Tenant ID`. Stretch to JWT validation.
+- [ ] **Message Deduplication**: Messages with a non-unique Idempotency Key will be deuplicated within a time-window since first-occurence.
+- [ ] **Fan-Out Architecture**: When publishing to a single queue, it will be possible to fan-out to N other queues. This would form the underpinnings of a real Pub Sub system, whereby Publishers are unaware of Subscribers.
+- [ ] **Optimised large message support**: large messages are already possible, but ideally large messages should not be stored directly in the hot storage tier, but instead offloaded to a binary store (requires Dapr Binary store capability, or similar)
+- [ ] **Queue Purge**: Remove all messages from a queue.
+- [ ] **Max Retries / Automatic Dead-lettering**: When calling Pop With Acknowledgements, if a message is popped N number of times without Acknowledgement, the message will be deemed poisonous, and automatically moved to the Deadletter queue.
+- [ ] **Dead-letter Forwarding**: Send a HTTP notification to any endpoint when a dead-letter message has been produced. Useful for alerting Operators, and triggering automated healing routines that sit external to the system.
+- [ ] **Priority Delete**: Delete a priority sub-queue in one operation.
+- [ ] **Scheduled Enque**: A message can be pushed to the front of any sub-queue, at a future scheduled time (Requires Message Receipts feature)
+- [ ] **Message revocation**: A message can be removed from the queue, regardless of its position (Requires Message Receipts feature)
+- [ ] **Rate-limit**: Push and Pop operations are protected with a per queue rate-limiter.
+- [ ] **Qoutas**: Queues are governed by Push and Pop qouates per minute/hour/day.
+- [ ] **Queue capacity limit**: Prevent Pushes until queue length drops below a capacity limit.
+- [ ] **Queue reorder functions**: Reorder a queue based on a field within the Json.
+- [ ] **Message functions**: Before a Pop is about to occur, call a HTTP endpoint with the message payload and replace message payload with the HTTP response.
+- [ ] **Language SDKs**: Competing Consumers would benefit from language SDKs which implement a gRPC message pump loop. This would allow the SDK to buffer messages and relay them to the applications message handler as push-based model to further increase throughput and reduce latency.
+- [ ] **Message TTL**: After a message has been in the queue for longer than the target ttl, drop it or send it to the dlq.
+- [ ] **Message Receipts**: on successful publish, return a unique receipt id which encodes the segment, and maybe even position
 
 
 ## Use Cases
