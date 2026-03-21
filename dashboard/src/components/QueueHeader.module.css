@@ -59,3 +59,57 @@
   font-size: 0.85rem;
   margin-top: 4px;
 }
+
+.registerSinkButton {
+  background: var(--gradient-success);
+  color: white;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  margin-left: 12px;
+}
+
+.sinkStatus {
+  margin-top: var(--spacing-md);
+  margin-bottom: var(--spacing-sm);
+}
+
+.sinkBadge {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: var(--radius-xl);
+  font-size: 14px;
+  font-weight: bold;
+  vertical-align: middle;
+  background: var(--gradient-success);
+  color: var(--color-text);
+  box-shadow: 0 2px 8px rgba(72, 187, 120, 0.3);
+}
+
+.sinkBadge code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.unregisterButton {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--color-text);
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  padding: 0;
+  margin-left: 8px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+  vertical-align: middle;
+}
+
+.unregisterButton:hover {
+  background: rgba(255, 255, 255, 0.3);
+  opacity: 1;
+}

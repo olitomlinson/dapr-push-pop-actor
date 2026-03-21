@@ -5,6 +5,8 @@ import type {
   DeadLetterRequest,
   DeadLetterResponse,
   ApiError,
+  RegisterSinkRequest,
+  RegisterSinkResponse,
 } from '../types/queue';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8002';
@@ -99,6 +101,32 @@ export const queueApi = {
     }
 
     return response.json();
+  },
+
+  async registerSink(queueId: string, request: RegisterSinkRequest): Promise<RegisterSinkResponse> {
+    const response = await fetch(`${API_BASE}/queue/${queueId}/sink/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ message: 'Unknown error' }));
+      throw new QueueApiError(response.status, data);
+    }
+
+    return response.json();
+  },
+
+  async unregisterSink(queueId: string): Promise<void> {
+    const response = await fetch(`${API_BASE}/queue/${queueId}/sink/unregister`, {
+      method: 'POST',
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ message: 'Unknown error' }));
+      throw new QueueApiError(response.status, data);
+    }
   },
 };
 

@@ -1,15 +1,13 @@
 # DaprMQ
 
-- A simple queue implementation. 
-- Store and retrieve JSON-payloads of any size. 
+- A simple Queue implementation for JSON payloads
 - Choose from either gauranteed FIFO consumers, or competing consumers (FIFO not gauranteed!)
+- Bring your own control loop to process the queue, or use the built-in HTTP Sink to drive messages to an endpoint.
 
 ## Quick Start
 
-### 30-Second Demo
-
+Clone and start with Docker
 ```bash
-# Clone and start with Docker
 git clone https://github.com/olitomlinson/dapr-mq.git
 
 cd dapr-mq
@@ -19,11 +17,13 @@ docker-compose up
 
 ### Explore the API capabilities of DaprMQ via the bundled Dashboard
 
-```http://localhost:9000```
+[http://localhost:9000](http://localhost:9000)
 
 ![Alt text of the image](/docs/dash.png)
 
-### Call the APIs directly
+### Call the Queue APIs directly
+
+This is as simple as it gets. Use `push` to add a message to the Queue. Use `pop` to dequeue a message in your processing loop.
 
 ```bash
 # Push a message to the queue with priority 1
@@ -62,6 +62,31 @@ curl -X POST "http://localhost:8000/queue/my-queue/pop"
 #  ]
 # }
 ```
+
+### Enable a HTTP Sink
+
+If you don't require a specialist control loop to pull messages from the Queue, you can use the built-in HTTP Sink that will automatically forward messages to any HTTP endpoint. 
+
+The HTTP Sink will obey several configurable parameters, such as Lock TTL, Polling Interval, and Max Concurrency, allowing you to fine-tune the throughput and latency.
+
+```bash
+curl -X POST 'http://localhost:8002/queue/1234/my-queue/register' \
+  -H 'Content-Type: application/json' \
+  -d '{ 
+        "url": "http://my-wiremock-container:8090/api/message-reciever",
+        "maxConcurrency": 5,
+        "LockTtlSeconds" : 30,
+        "PollingIntervalSeconds": 5
+      }'
+```
+
+### Responding to a HTTP Request delivered by the HTTP Sink
+
+The `url` that is called by the HTTP Sink **MUST** respond with one of following Status Codes
+ - `200 OK` - The HTTP Sink will automically Ack the message
+ - `202 Accepted` - The HTTP Sink will NOT automatically Ack the message - You have taken responsibility to complete the message by calling either `/acknowledge` or `/dead-letter` on the Queue.
+ - `4xx` / `5xx` - The HTTP sink will take no action (No-op). The message will expire naturally via the `LockTtlSeconds` parameter, and then become available again for delivery at some point in the future.
+
 
 ### Run integration tests
 

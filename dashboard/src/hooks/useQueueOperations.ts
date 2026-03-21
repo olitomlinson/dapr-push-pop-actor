@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { queueApi, QueueApiError, createApiError } from '../services/queueApi';
 import { generatePayload } from '../utils/queueHelpers';
-import type { PoppedMessage, ApiError, QueuePayload } from '../types/queue';
+import type { PoppedMessage, ApiError, QueuePayload, SinkConfig, RegisterSinkRequest } from '../types/queue';
 
 export const useQueueOperations = (queueId: string) => {
   const [currentPayload, setCurrentPayload] = useState<QueuePayload>(() => generatePayload());
@@ -11,6 +11,9 @@ export const useQueueOperations = (queueId: string) => {
   const [isPushing, setIsPushing] = useState(false);
   const [isPopping, setIsPopping] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
+  const [sinkRegistered, setSinkRegistered] = useState(false);
+  const [sinkConfig, setSinkConfig] = useState<SinkConfig | null>(null);
+  const [isRegisteringSink, setIsRegisteringSink] = useState(false);
 
   // Reset state when queue ID changes
   useEffect(() => {
@@ -19,6 +22,8 @@ export const useQueueOperations = (queueId: string) => {
     setPoppedMessages([]);
     setCurrentPayload(generatePayload());
     setError(null);
+    setSinkRegistered(false);
+    setSinkConfig(null);
   }, [queueId]);
 
   const pushMessage = async (priority: number) => {
@@ -125,6 +130,38 @@ export const useQueueOperations = (queueId: string) => {
     }
   };
 
+  const registerSink = async (config: RegisterSinkRequest) => {
+    setIsRegisteringSink(true);
+    try {
+      await queueApi.registerSink(queueId, config);
+      setSinkRegistered(true);
+      setSinkConfig(config);
+    } catch (err) {
+      if (err instanceof QueueApiError) {
+        setError(createApiError(err.status, err.data));
+      } else {
+        setError(createApiError('Network Error', (err as Error).message));
+      }
+      throw err;
+    } finally {
+      setIsRegisteringSink(false);
+    }
+  };
+
+  const unregisterSink = async () => {
+    try {
+      await queueApi.unregisterSink(queueId);
+      setSinkRegistered(false);
+      setSinkConfig(null);
+    } catch (err) {
+      if (err instanceof QueueApiError) {
+        setError(createApiError(err.status, err.data));
+      } else {
+        setError(createApiError('Network Error', (err as Error).message));
+      }
+    }
+  };
+
   return {
     currentPayload,
     messagesPushed,
@@ -139,5 +176,10 @@ export const useQueueOperations = (queueId: string) => {
     acknowledgeMessage,
     deadLetterMessage,
     clearError: () => setError(null),
+    sinkRegistered,
+    sinkConfig,
+    isRegisteringSink,
+    registerSink,
+    unregisterSink,
   };
 };

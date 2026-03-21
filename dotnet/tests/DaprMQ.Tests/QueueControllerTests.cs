@@ -17,10 +17,14 @@ namespace DaprMQ.Tests;
 public class QueueControllerTests
 {
     private readonly Mock<ILogger<QueueController>> _mockLogger;
+    private readonly Mock<IHttpSinkActorInvoker> _mockHttpSinkActorInvoker;
+    private readonly Mock<Dapr.Actors.Client.IActorProxyFactory> _mockActorProxyFactory;
 
     public QueueControllerTests()
     {
         _mockLogger = new Mock<ILogger<QueueController>>();
+        _mockHttpSinkActorInvoker = new Mock<IHttpSinkActorInvoker>();
+        _mockActorProxyFactory = new Mock<Dapr.Actors.Client.IActorProxyFactory>();
     }
 
     [Fact]
@@ -35,7 +39,7 @@ public class QueueControllerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PushResponse { Success = true, ItemsPushed = 1 });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var itemElement = JsonSerializer.SerializeToElement(new { id = 1, value = "test" });
         var request = new ApiPushRequest(new List<ApiPushItem>
         {
@@ -64,7 +68,7 @@ public class QueueControllerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PushResponse { Success = true, ItemsPushed = 3 });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var item1 = JsonSerializer.SerializeToElement(new { id = 1 });
         var item2 = JsonSerializer.SerializeToElement(new { id = 2 });
         var item3 = JsonSerializer.SerializeToElement(new { id = 3 });
@@ -91,7 +95,7 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiPushRequest(new List<ApiPushItem>());
 
         // Act
@@ -108,7 +112,7 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiPushRequest(null!);
 
         // Act
@@ -125,7 +129,7 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var itemElement = JsonSerializer.SerializeToElement(new { id = 1 });
         var request = new ApiPushRequest(new List<ApiPushItem>
         {
@@ -146,7 +150,7 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         var items = new List<ApiPushItem>();
         for (int i = 0; i < 1001; i++)
@@ -206,7 +210,7 @@ public class QueueControllerTests
                 Message = "Item locked with ID test-lock-123"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: true, ttl_seconds: 30);
@@ -245,7 +249,7 @@ public class QueueControllerTests
                 Message = "Queue is locked by another operation"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: true, ttl_seconds: 30);
@@ -282,7 +286,7 @@ public class QueueControllerTests
                 Message = "Queue is empty"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: true, ttl_seconds: 30);
@@ -317,7 +321,7 @@ public class QueueControllerTests
                 LockExpiresAt = DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds()
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: false);
@@ -354,7 +358,7 @@ public class QueueControllerTests
                 IsEmpty = false
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: false);
@@ -391,7 +395,7 @@ public class QueueControllerTests
                 ItemsAcknowledged = 1
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiAcknowledgeRequest("test-lock-123");
 
         // Act
@@ -429,7 +433,7 @@ public class QueueControllerTests
                 ItemsAcknowledged = 0
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiAcknowledgeRequest("expired-lock");
 
         // Act
@@ -465,7 +469,7 @@ public class QueueControllerTests
                 ItemsAcknowledged = 0
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiAcknowledgeRequest("invalid-lock");
 
         // Act
@@ -501,7 +505,7 @@ public class QueueControllerTests
                 ErrorMessage = null
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiExtendLockRequest("test-lock-123", AdditionalTtlSeconds: 30);
 
         // Act
@@ -539,7 +543,7 @@ public class QueueControllerTests
                 ErrorMessage = "Lock not found"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiExtendLockRequest("nonexistent-lock", AdditionalTtlSeconds: 30);
 
         // Act
@@ -574,7 +578,7 @@ public class QueueControllerTests
                 ErrorMessage = "Lock has expired"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiExtendLockRequest("expired-lock", AdditionalTtlSeconds: 30);
 
         // Act
@@ -610,7 +614,7 @@ public class QueueControllerTests
                 ErrorMessage = "Invalid lock ID"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiExtendLockRequest("", AdditionalTtlSeconds: 30);
 
         // Act
@@ -644,7 +648,7 @@ public class QueueControllerTests
                 Message = "Item moved to dead letter queue"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiDeadLetterRequest("valid-lock-123");
 
         // Act
@@ -681,7 +685,7 @@ public class QueueControllerTests
                 Message = "No active lock found"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiDeadLetterRequest("nonexistent-lock");
 
         // Act
@@ -715,7 +719,7 @@ public class QueueControllerTests
                 Message = "Lock has expired"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiDeadLetterRequest("expired-lock");
 
         // Act
@@ -750,7 +754,7 @@ public class QueueControllerTests
                 Message = "Invalid lock ID provided"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
         var request = new ApiDeadLetterRequest("wrong-lock-id");
 
         // Act
@@ -791,7 +795,7 @@ public class QueueControllerTests
                 IsEmpty = false
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: false, count: 3);
@@ -815,7 +819,7 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act - Request more than 100 items
         var result = await controller.Pop("test-queue", require_ack: false, count: 101);
@@ -836,7 +840,7 @@ public class QueueControllerTests
     {
         // Arrange
         var mockInvoker = new Mock<IActorInvoker>();
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act - Request negative count
         var result = await controller.Pop("test-queue", require_ack: false, count: -1);
@@ -870,7 +874,7 @@ public class QueueControllerTests
                 Message = "Queue is empty"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: false, count: 10);
@@ -905,7 +909,7 @@ public class QueueControllerTests
                 LockExpiresAt = DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds()
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: false, count: 5);
@@ -964,7 +968,7 @@ public class QueueControllerTests
                 Message = "Items locked"
             });
 
-        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object);
+        var controller = new QueueController(_mockLogger.Object, mockInvoker.Object, _mockHttpSinkActorInvoker.Object, _mockActorProxyFactory.Object);
 
         // Act
         var result = await controller.Pop("test-queue", require_ack: true, ttl_seconds: 30, count: 3);

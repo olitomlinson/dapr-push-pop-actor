@@ -5,6 +5,7 @@ import { PushSection } from './components/PushSection';
 import { PopSection } from './components/PopSection';
 import { MessagesList } from './components/MessagesList';
 import { ErrorModal } from './components/ErrorModal';
+import { RegisterSinkModal } from './components/RegisterSinkModal';
 import { generateQueueId } from './utils/queueHelpers';
 import './styles/global.css';
 
@@ -13,6 +14,8 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     return params.get('queue_name') || generateQueueId();
   });
+
+  const [showSinkModal, setShowSinkModal] = useState(false);
 
   const {
     currentPayload,
@@ -28,10 +31,25 @@ function App() {
     acknowledgeMessage,
     deadLetterMessage,
     clearError,
+    sinkRegistered,
+    sinkConfig,
+    isRegisteringSink,
+    registerSink,
+    unregisterSink,
   } = useQueueOperations(queueId);
 
   const handleQueueIdChange = (newQueueId: string) => {
     setQueueId(newQueueId);
+  };
+
+  const handleRegisterSinkClick = () => {
+    setShowSinkModal(true);
+  };
+
+  const handleUnregisterSink = async () => {
+    if (confirm('Are you sure you want to unregister the HTTP sink?')) {
+      await unregisterSink();
+    }
   };
 
   const showPopSection = messagesPushed > 0;
@@ -49,6 +67,10 @@ function App() {
               messagesPushed={messagesPushed}
               messagesPopped={messagesPopped}
               onQueueIdChange={handleQueueIdChange}
+              sinkRegistered={sinkRegistered}
+              sinkUrl={sinkConfig?.url}
+              onRegisterSink={handleRegisterSinkClick}
+              onUnregisterSink={handleUnregisterSink}
             />
 
             <MessagesList
@@ -76,6 +98,13 @@ function App() {
           </div>
         </div>
       </div>
+
+      <RegisterSinkModal
+        isOpen={showSinkModal}
+        isRegistering={isRegisteringSink}
+        onRegister={registerSink}
+        onClose={() => setShowSinkModal(false)}
+      />
 
       <ErrorModal error={error} onClose={clearError} />
     </>

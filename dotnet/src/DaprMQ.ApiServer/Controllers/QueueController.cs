@@ -13,13 +13,19 @@ public class QueueController : ControllerBase
 {
     private readonly ILogger<QueueController> _logger;
     private readonly IActorInvoker _actorInvoker;
+    private readonly IHttpSinkActorInvoker _httpSinkActorInvoker;
+    private readonly Dapr.Actors.Client.IActorProxyFactory _actorProxyFactory;
 
     public QueueController(
         ILogger<QueueController> logger,
-        IActorInvoker actorInvoker)
+        IActorInvoker actorInvoker,
+        IHttpSinkActorInvoker httpSinkActorInvoker,
+        Dapr.Actors.Client.IActorProxyFactory actorProxyFactory)
     {
         _logger = logger;
         _actorInvoker = actorInvoker;
+        _httpSinkActorInvoker = httpSinkActorInvoker;
+        _actorProxyFactory = actorProxyFactory;
     }
 
     /// <summary>
@@ -377,6 +383,123 @@ public class QueueController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Error moving item to dead letter queue for {queueId}");
+            return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// Register a sink for pull-based message delivery to an HTTP endpoint.
+    /// </summary>
+    [HttpPost("{queueId}/sink/register")]
+    public async Task<IActionResult> RegisterSink(
+        string queueId,
+        [FromBody] ApiRegisterHttpSinkRequest request)
+    {
+        try
+        {
+            // Validate URL
+            if (string.IsNullOrWhiteSpace(request.Url))
+            {
+                return BadRequest(new ApiRegisterHttpSinkResponse(
+                    false,
+                    "URL cannot be empty"
+                ));
+            }
+
+            // Validate URL format
+            if (!Uri.TryCreate(request.Url, UriKind.Absolute, out _))
+            {
+                return BadRequest(new ApiRegisterHttpSinkResponse(
+                    false,
+                    "URL must be a valid absolute URI"
+                ));
+            }
+
+            // Validate MaxConcurrency
+            if (request.MaxConcurrency < 1 || request.MaxConcurrency > 100)
+            {
+                return BadRequest(new ApiRegisterHttpSinkResponse(
+                    false,
+                    "MaxConcurrency must be between 1 and 100"
+                ));
+            }
+
+            // Validate LockTtlSeconds
+            if (request.LockTtlSeconds < 1 || request.LockTtlSeconds > 300)
+            {
+                return BadRequest(new ApiRegisterHttpSinkResponse(
+                    false,
+                    "LockTtlSeconds must be between 1 and 300"
+                ));
+            }
+
+            // Validate PollingIntervalSeconds
+            if (request.PollingIntervalSeconds < 1 || request.PollingIntervalSeconds > 60)
+            {
+                return BadRequest(new ApiRegisterHttpSinkResponse(
+                    false,
+                    "PollingIntervalSeconds must be between 1 and 60"
+                ));
+            }
+
+            // Calculate sink actor ID
+            string sinkActorId = $"{queueId}-sink";
+            var sinkActorId_ActorId = new ActorId(sinkActorId);
+
+            // Build InitializeHttpSinkRequest
+            var initRequest = new InitializeHttpSinkRequest
+            {
+                Url = request.Url,
+                QueueActorId = queueId,
+                MaxConcurrency = request.MaxConcurrency,
+                LockTtlSeconds = request.LockTtlSeconds,
+                PollingIntervalSeconds = request.PollingIntervalSeconds
+            };
+
+            // Initialize HttpSinkActor (registers reminder, starts polling)
+            await _httpSinkActorInvoker.InvokeMethodAsync(
+                sinkActorId_ActorId,
+                ActorMethodNames.InitializeHttpSink,
+                initRequest);
+
+            return Ok(new ApiRegisterHttpSinkResponse(
+                true,
+                "Sink registered successfully",
+                sinkActorId
+            ));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error registering sink for {queueId}");
+            return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// Unregister the sink for the specified queue.
+    /// </summary>
+    [HttpPost("{queueId}/sink/unregister")]
+    public async Task<IActionResult> UnregisterSink(string queueId)
+    {
+        try
+        {
+            // Calculate sink actor ID
+            string sinkActorId = $"{queueId}-sink";
+            var sinkActorId_ActorId = new ActorId(sinkActorId);
+
+            // Uninitialize HttpSinkActor (unregisters reminder)
+            await _httpSinkActorInvoker.InvokeMethodAsync(
+                sinkActorId_ActorId,
+                ActorMethodNames.UninitializeHttpSink);
+
+            return Ok(new ApiUnregisterHttpSinkResponse(
+                true,
+                "Sink unregistered successfully"
+            ));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Error unregistering sink for {queueId}");
             return StatusCode(500, new ApiErrorResponse($"Internal error: {ex.Message}"));
         }
     }

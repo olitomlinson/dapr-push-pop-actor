@@ -7,9 +7,22 @@ interface QueueHeaderProps {
   messagesPushed: number;
   messagesPopped: number;
   onQueueIdChange: (newQueueId: string) => void;
+  sinkRegistered: boolean;
+  sinkUrl?: string;
+  onRegisterSink: () => void;
+  onUnregisterSink: () => void;
 }
 
-export const QueueHeader = ({ queueId, messagesPushed, messagesPopped, onQueueIdChange }: QueueHeaderProps) => {
+export const QueueHeader = ({
+  queueId,
+  messagesPushed,
+  messagesPopped,
+  onQueueIdChange,
+  sinkRegistered,
+  sinkUrl,
+  onRegisterSink,
+  onUnregisterSink
+}: QueueHeaderProps) => {
   const isDLQ = isDeadLetterQueue(queueId);
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState('');
@@ -72,12 +85,31 @@ export const QueueHeader = ({ queueId, messagesPushed, messagesPopped, onQueueId
           <>
             <span>{queueId}</span>
             <button onClick={handleEditClick} className={styles.editButton}>✏️</button>
+            {!sinkRegistered && (
+              <button onClick={onRegisterSink} className={styles.registerSinkButton}>
+                Register HTTP Sink
+              </button>
+            )}
           </>
         )}
         {isDLQ && (
           <span className={styles.deadletterBadge}>☠️ DEAD LETTER</span>
         )}
       </h3>
+      {sinkRegistered && sinkUrl && (
+        <p className={styles.sinkStatus}>
+          <span className={styles.sinkBadge}>
+            ⚡ HTTP Sink Active: <code>{sinkUrl}</code>
+            <button
+              className={styles.unregisterButton}
+              onClick={onUnregisterSink}
+              title="Unregister sink"
+            >
+              ×
+            </button>
+          </span>
+        </p>
+      )}
       <p>Stats: <span>{messagesPushed} pushed | {messagesPopped} popped</span></p>
     </div>
   );

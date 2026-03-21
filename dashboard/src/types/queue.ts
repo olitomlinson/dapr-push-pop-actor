@@ -56,3 +56,22 @@ export interface QueuePayload {
   action: string;
   timestamp: string;
 }
+
+// HTTP Sink types
+export interface RegisterSinkRequest {
+  url: string;
+  maxConcurrency: number;
+  lockTtlSeconds: number;
+  pollingIntervalSeconds: number;
+}
+
+export interface RegisterSinkResponse {
+  sinkActorId: string;
+}
+
+export interface SinkConfig {
+  url: string;
+  maxConcurrency: number;
+  lockTtlSeconds: number;
+  pollingIntervalSeconds: number;
+}

@@ -379,6 +379,22 @@ services:
     networks:
       - daprmq-network
 
+  ############################
+  # WireMock (HTTP API Mocking)
+  ############################
+  wiremock:
+    image: wiremock/wiremock:3.10.0
+    container_name: wiremock
+    command:
+      - --verbose
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./wiremock/mappings:/home/wiremock/mappings
+      - ./wiremock/__files:/home/wiremock/__files
+    networks:
+      - daprmq-network
+
 networks:
   daprmq-network:
     driver: bridge
