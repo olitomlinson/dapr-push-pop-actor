@@ -78,6 +78,11 @@ public record PopWithAckRequest
     /// Whether to allow competing consumers (multiple parallel locks). Default: false (legacy single-lock behavior).
     /// </summary>
     public bool AllowCompetingConsumers { get; init; } = false;
+
+    /// <summary>
+    /// Optional limit on total concurrent locks in the queue. If specified, PopWithAck will return at most (MaxConcurrency - current LockCount) items.
+    /// </summary>
+    public int? MaxConcurrency { get; init; }
 }
 
 /// <summary>
@@ -172,6 +177,11 @@ public record PopWithAckResponse
     /// Whether the queue is empty.
     /// </summary>
     public bool IsEmpty { get; init; }
+
+    /// <summary>
+    /// Whether the MaxConcurrency limit has been reached. This is set to true when the queue has reached the maximum number of concurrent locks specified in the PopWithAck request.
+    /// </summary>
+    public bool MaxConcurrencyReached { get; init; }
 
     /// <summary>
     /// Status message.
@@ -314,4 +324,35 @@ public record DeadLetterResponse
     /// Dead letter queue ID where the item was moved.
     /// </summary>
     public string? DlqId { get; init; }
+}
+
+/// <summary>
+/// Request model for initializing an HTTP sink actor.
+/// </summary>
+public record InitializeHttpSinkRequest
+{
+    /// <summary>
+    /// HTTP endpoint URL where messages will be delivered.
+    /// </summary>
+    public required string Url { get; init; }
+
+    /// <summary>
+    /// Queue actor ID to poll from.
+    /// </summary>
+    public required string QueueActorId { get; init; }
+
+    /// <summary>
+    /// Maximum number of concurrent locks in the queue (1-100).
+    /// </summary>
+    public required int MaxConcurrency { get; init; }
+
+    /// <summary>
+    /// Lock TTL in seconds for PopWithAck operations (1-300).
+    /// </summary>
+    public required int LockTtlSeconds { get; init; }
+
+    /// <summary>
+    /// Polling interval in seconds (1-60).
+    /// </summary>
+    public required int PollingIntervalSeconds { get; init; }
 }

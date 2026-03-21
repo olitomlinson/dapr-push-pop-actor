@@ -56,3 +56,54 @@ export interface QueuePayload {
   action: string;
   timestamp: string;
 }
+
+// HTTP Sink types
+export interface RegisterSinkRequest {
+  url: string;
+  maxConcurrency: number;
+  lockTtlSeconds: number;
+  pollingIntervalSeconds: number;
+}
+
+export interface RegisterSinkResponse {
+  sinkActorId: string;
+}
+
+export interface SinkConfig {
+  url: string;
+  maxConcurrency: number;
+  lockTtlSeconds: number;
+  pollingIntervalSeconds: number;
+}
+
+// WireMock types
+export interface WiremockRequestItem {
+  item: unknown;
+  priority?: number;
+  lockId?: string;
+  lockExpiresAt?: number;
+}
+
+export interface WiremockRequest {
+  id: string;
+  request: {
+    method: string;
+    url: string;
+    body: string;
+    bodyAsBase64?: string;
+    loggedDateString: string;
+    headers: Record<string, string | string[]>;
+  };
+  response: {
+    status: number;
+    body: string;
+  };
+  parsedItems?: WiremockRequestItem[]; // Parsed from request body when available
+}
+
+export interface WiremockAdminResponse {
+  requests: WiremockRequest[];
+  meta: {
+    total: number;
+  };
+}

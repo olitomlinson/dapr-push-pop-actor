@@ -10,7 +10,7 @@ interface PushSectionProps {
 export const PushSection = ({ currentPayload, isPushing, onPush }: PushSectionProps) => {
   return (
     <div className="card">
-      <h3>Push a payload</h3>
+      <h3>Push</h3>
       <pre>{JSON.stringify(currentPayload, null, 2)}</pre>
       <button
         className={styles.priority0Btn}

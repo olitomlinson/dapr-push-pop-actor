@@ -25,7 +25,7 @@ export const PopSection = ({ isPopping, onPop, onPopWithAck }: PopSectionProps) 
     <>
       {/* Pop from Queue Card */}
       <div className="card">
-        <h3>Pop from Queue</h3>
+        <h3>Pop</h3>
         <p style={{ fontSize: '0.9em', color: '#666', marginBottom: '1rem' }}>
           Remove and retrieve the next message (immediate removal)
         </p>
@@ -56,7 +56,7 @@ export const PopSection = ({ isPopping, onPop, onPopWithAck }: PopSectionProps) 
 
       {/* Pop with Acknowledgement Card */}
       <div className="card">
-        <h3>Pop with Acknowledgement</h3>
+        <h3>Pop (Requires Acknowledgement)</h3>
         <p style={{ fontSize: '0.9em', color: '#666', marginBottom: '1rem' }}>
           Lock a message for processing (requires acknowledgement)
         </p>

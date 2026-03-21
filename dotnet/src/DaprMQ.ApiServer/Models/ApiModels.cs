@@ -82,3 +82,21 @@ public record ApiDeadLetterResponse(
     string? ErrorCode = null,
     string? DlqId = null
 );
+
+public record ApiRegisterHttpSinkRequest(
+    string Url,
+    int MaxConcurrency = 5,
+    int LockTtlSeconds = 30,
+    int PollingIntervalSeconds = 5
+);
+
+public record ApiRegisterHttpSinkResponse(
+    bool Success,
+    string Message,
+    string? HttpSinkActorId = null
+);
+
+public record ApiUnregisterHttpSinkResponse(
+    bool Success,
+    string Message
+);

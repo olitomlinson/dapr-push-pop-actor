@@ -665,6 +665,24 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             // Get count (default 1, clamped to 1-100)
             int count = Math.Max(1, Math.Min(100, request.Count));
 
+            // Apply MaxConcurrency limit if specified
+            if (request.MaxConcurrency.HasValue)
+            {
+                int availableCapacity = Math.Max(0, request.MaxConcurrency.Value - metadata.LockCount);
+                count = Math.Min(count, availableCapacity);
+
+                if (count == 0)
+                {
+                    return new PopWithAckResponse
+                    {
+                        Locked = false,
+                        IsEmpty = false,
+                        MaxConcurrencyReached = true,
+                        Message = $"MaxConcurrency limit reached ({metadata.LockCount}/{request.MaxConcurrency.Value})"
+                    };
+                }
+            }
+
             // Legacy mode: block if ANY lock exists
             if (!request.AllowCompetingConsumers && metadata.LockCount > 0)
             {
@@ -1385,4 +1403,5 @@ public class QueueActor : Actor, IQueueActor, IRemindable
         // Return updated metadata so caller can use it
         return metadata;
     }
+
 }

@@ -19,6 +19,16 @@ public class DaprTestFixture : IAsyncLifetime
     public string GrpcUrl => Environment.ApiServerGrpcUrl;
 
     /// <summary>
+    /// WireMock server URL for HTTP sink testing (test host access)
+    /// </summary>
+    public string WireMockUrl => Environment.WireMockUrl;
+
+    /// <summary>
+    /// WireMock server URL for HTTP sink testing (Docker network internal access)
+    /// </summary>
+    public string WireMockInternalUrl => Environment.WireMockInternalUrl;
+
+    /// <summary>
     /// Queue ID for tests - read from environment variable or generated as random GUID
     /// </summary>
     public string QueueId { get; private set; }

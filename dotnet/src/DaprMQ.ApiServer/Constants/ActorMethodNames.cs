@@ -11,4 +11,6 @@ public static class ActorMethodNames
     public const string Acknowledge = "Acknowledge";
     public const string ExtendLock = "ExtendLock";
     public const string DeadLetter = "DeadLetter";
+    public const string InitializeHttpSink = "InitializeHttpSink";
+    public const string UninitializeHttpSink = "UninitializeHttpSink";
 }

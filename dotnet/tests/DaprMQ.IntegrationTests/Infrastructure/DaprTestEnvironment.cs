@@ -17,6 +17,7 @@ public class DaprTestEnvironment : IAsyncLifetime
 {
     private INetwork? _network;
     private PostgreSqlContainer? _postgresContainer;
+    private IContainer? _wireMockContainer;
     private IContainer? _daprPlacementContainer;
     private IContainer? _daprSchedulerContainer;
     private IContainer? _daprSidecarContainer;
@@ -24,6 +25,8 @@ public class DaprTestEnvironment : IAsyncLifetime
 
     // Exposed endpoints and connection strings
     public string PostgresConnectionString { get; private set; } = string.Empty;
+    public string WireMockUrl { get; private set; } = string.Empty;
+    public string WireMockInternalUrl { get; private set; } = string.Empty;
     public string DaprHttpEndpoint { get; private set; } = string.Empty;
     public string DaprGrpcEndpoint { get; private set; } = string.Empty;
     public string ApiServerUrl { get; private set; } = string.Empty;
@@ -61,7 +64,24 @@ public class DaprTestEnvironment : IAsyncLifetime
         await _postgresContainer.StartAsync();
         PostgresConnectionString = _postgresContainer.GetConnectionString();
 
-        // 2. Start Dapr placement service
+        // 2. Start WireMock server for HTTP sink testing
+        const string wireMockNetworkAlias = "wiremock-server";
+        const int wireMockInternalPort = 8080;
+
+        _wireMockContainer = new ContainerBuilder()
+            .WithImage("wiremock/wiremock:3.3.1")
+            .WithNetwork(_network)
+            .WithNetworkAliases(wireMockNetworkAlias)
+            .WithPortBinding(wireMockInternalPort, true)  // Use dynamic port binding on host
+            .Build();
+
+        await _wireMockContainer.StartAsync();
+
+        var wireMockPort = _wireMockContainer.GetMappedPublicPort(wireMockInternalPort);
+        WireMockUrl = $"http://localhost:{wireMockPort}";
+        WireMockInternalUrl = $"http://{wireMockNetworkAlias}:{wireMockInternalPort}";
+
+        // 3. Start Dapr placement service
         _daprPlacementContainer = new ContainerBuilder()
             .WithImage("daprio/dapr:1.17.2-rc.2")
             .WithNetwork(_network)
@@ -77,7 +97,7 @@ public class DaprTestEnvironment : IAsyncLifetime
 
         const string schedulerContainerDataDir = "/data/dapr-scheduler";
         _schedulerTestDirectory = TestDirectoryManager.CreateTestDirectory("scheduler");
-        // 3. Start Dapr scheduler service
+        // 4. Start Dapr scheduler service
         _daprSchedulerContainer = new ContainerBuilder()
             .WithImage("daprio/dapr:1.17.2-rc.2")
             .WithNetwork(_network)
@@ -92,7 +112,7 @@ public class DaprTestEnvironment : IAsyncLifetime
         // Wait a bit for scheduler to be ready
         await Task.Delay(TimeSpan.FromSeconds(2));
 
-        // 4. Start API server container WITHOUT wait strategy (will be ready after Dapr starts)
+        // 5. Start API server container WITHOUT wait strategy (will be ready after Dapr starts)
         var apiServerBuilder = new ContainerBuilder()
             .WithImage("daprmq-api:test")
             .WithNetwork(_network)
@@ -130,7 +150,7 @@ public class DaprTestEnvironment : IAsyncLifetime
         // Give API server a moment to start listening
         await Task.Delay(TimeSpan.FromSeconds(2));
 
-        // 5. Start Dapr sidecar (connects to API server via Docker network)
+        // 6. Start Dapr sidecar (connects to API server via Docker network)
         // Mount the components directory from project root (3 levels up from bin/Debug/net10.0)
         var testProjectRoot = Path.Combine(Directory.GetCurrentDirectory(), "..", "..", "..");
         var componentsPath = Path.GetFullPath(Path.Combine(testProjectRoot, "dapr-components"));
@@ -206,6 +226,11 @@ public class DaprTestEnvironment : IAsyncLifetime
         if (_postgresContainer != null)
         {
             await _postgresContainer.DisposeAsync();
+        }
+
+        if (_wireMockContainer != null)
+        {
+            await _wireMockContainer.DisposeAsync();
         }
 
         if (_network != null)

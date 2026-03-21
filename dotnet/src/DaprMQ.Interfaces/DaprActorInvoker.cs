@@ -38,4 +38,25 @@ public class DaprActorInvoker : IActorInvoker
         var proxy = _actorProxyFactory.Create(actorId, _actorType);
         return await proxy.InvokeMethodAsync<TRequest, TResponse>(methodName, request, cancellationToken);
     }
+
+    /// <inheritdoc />
+    public async Task InvokeMethodAsync<TRequest>(
+        ActorId actorId,
+        string methodName,
+        TRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var proxy = _actorProxyFactory.Create(actorId, _actorType);
+        await proxy.InvokeMethodAsync(methodName, request, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task InvokeMethodAsync(
+        ActorId actorId,
+        string methodName,
+        CancellationToken cancellationToken = default)
+    {
+        var proxy = _actorProxyFactory.Create(actorId, _actorType);
+        await proxy.InvokeMethodAsync(methodName, cancellationToken);
+    }
 }

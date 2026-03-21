@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useQueueOperations } from './hooks/useQueueOperations';
+import { useUnifiedWiremock, type ResponseStatus } from './hooks/useUnifiedWiremock';
 import { QueueHeader } from './components/QueueHeader';
 import { PushSection } from './components/PushSection';
 import { PopSection } from './components/PopSection';
 import { MessagesList } from './components/MessagesList';
 import { ErrorModal } from './components/ErrorModal';
+import { RegisterSinkModal } from './components/RegisterSinkModal';
 import { generateQueueId } from './utils/queueHelpers';
 import './styles/global.css';
 
@@ -13,6 +15,10 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     return params.get('queue_name') || generateQueueId();
   });
+
+  const [showSinkModal, setShowSinkModal] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [wiremockSelectedStatus, setWiremockSelectedStatus] = useState<ResponseStatus>(200);
 
   const {
     currentPayload,
@@ -27,11 +33,45 @@ function App() {
     popWithAck,
     acknowledgeMessage,
     deadLetterMessage,
+    acknowledgeByLockId,
+    deadLetterByLockId,
+    wiremockLockStates,
     clearError,
+    sinkRegistered,
+    sinkConfig,
+    isRegisteringSink,
+    registerSink,
+    unregisterSink,
   } = useQueueOperations(queueId);
+
+  const {
+    isWiremockDetected,
+    requests: wiremockRequests,
+    isLoading: wiremockLoading,
+    error: wiremockError,
+    messageCount: wiremockMessageCount,
+    blockAutoReapplication,
+    unblockAutoReapplication
+  } = useUnifiedWiremock(sinkConfig?.url, wiremockSelectedStatus);
 
   const handleQueueIdChange = (newQueueId: string) => {
     setQueueId(newQueueId);
+  };
+
+  const handleRegisterSinkClick = () => {
+    setIsEditMode(false);
+    setShowSinkModal(true);
+  };
+
+  const handleUpdateSinkClick = () => {
+    setIsEditMode(true);
+    setShowSinkModal(true);
+  };
+
+  const handleUnregisterSink = async () => {
+    if (confirm('Are you sure you want to unregister the HTTP sink?')) {
+      await unregisterSink();
+    }
   };
 
   const showPopSection = messagesPushed > 0;
@@ -49,12 +89,32 @@ function App() {
               messagesPushed={messagesPushed}
               messagesPopped={messagesPopped}
               onQueueIdChange={handleQueueIdChange}
+              sinkRegistered={sinkRegistered}
+              sinkUrl={sinkConfig?.url}
+              onRegisterSink={handleRegisterSinkClick}
+              onUpdateSink={handleUpdateSinkClick}
+              onUnregisterSink={handleUnregisterSink}
+              isWiremockDetected={isWiremockDetected}
             />
 
             <MessagesList
               messages={poppedMessages}
               onAcknowledge={acknowledgeMessage}
               onDeadLetter={deadLetterMessage}
+              onAcknowledgeByLockId={acknowledgeByLockId}
+              onDeadLetterByLockId={deadLetterByLockId}
+              wiremockLockStates={wiremockLockStates}
+              sinkUrl={sinkConfig?.url}
+              queueId={queueId}
+              isWiremockDetected={isWiremockDetected}
+              wiremockRequests={wiremockRequests}
+              wiremockLoading={wiremockLoading}
+              wiremockError={wiremockError}
+              wiremockMessageCount={wiremockMessageCount}
+              wiremockSelectedStatus={wiremockSelectedStatus}
+              onWiremockStatusChange={setWiremockSelectedStatus}
+              blockAutoReapplication={blockAutoReapplication}
+              unblockAutoReapplication={unblockAutoReapplication}
             />
           </div>
 
@@ -76,6 +136,15 @@ function App() {
           </div>
         </div>
       </div>
+
+      <RegisterSinkModal
+        isOpen={showSinkModal}
+        isRegistering={isRegisteringSink}
+        onRegister={registerSink}
+        onClose={() => setShowSinkModal(false)}
+        initialConfig={isEditMode ? sinkConfig || undefined : undefined}
+        isEditMode={isEditMode}
+      />
 
       <ErrorModal error={error} onClose={clearError} />
     </>

@@ -64,6 +64,9 @@ builder.Services.AddDaprClient();
 // Register Actor Proxy Factory explicitly (needed for DaprActorInvoker)
 builder.Services.AddSingleton<Dapr.Actors.Client.IActorProxyFactory, Dapr.Actors.Client.ActorProxyFactory>();
 
+// Add HttpClient services (required by HttpSinkActor)
+builder.Services.AddHttpClient();
+
 // Add gRPC services
 builder.Services.AddGrpc();
 
@@ -82,6 +85,11 @@ builder.Services.AddSingleton<IActorInvoker>(sp =>
     new DaprActorInvoker(
         sp.GetRequiredService<Dapr.Actors.Client.IActorProxyFactory>(),
         actorConfig.ActorTypeName));
+
+// Register HttpSinkActor invoker (dedicated invoker for HttpSinkActor operations)
+builder.Services.AddSingleton<IHttpSinkActorInvoker>(sp =>
+    new HttpSinkActorInvoker(
+        sp.GetRequiredService<Dapr.Actors.Client.IActorProxyFactory>()));
 
 // Add Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
@@ -103,6 +111,7 @@ if (registerActors)
     builder.Services.AddActors(options =>
     {
         options.Actors.RegisterActor<DaprMQ.QueueActor>(actorConfig.ActorTypeName);
+        options.Actors.RegisterActor<DaprMQ.HttpSinkActor>("HttpSinkActor");
 
         // Configure actor runtime settings
         options.ActorIdleTimeout = TimeSpan.FromSeconds(60);

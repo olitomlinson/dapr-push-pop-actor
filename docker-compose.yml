@@ -12,7 +12,7 @@ services:
       - POSTGRES_PASSWORD=daprmq_secret_123
       - POSTGRES_DB=actor_state
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - daprmq-network
     volumes:
@@ -376,6 +376,22 @@ services:
       dockerfile: Dockerfile
     ports:
       - "9000:80"
+    networks:
+      - daprmq-network
+
+  ############################
+  # WireMock (HTTP API Mocking)
+  ############################
+  wiremock:
+    image: wiremock/wiremock:3.10.0
+    container_name: wiremock
+    command:
+      - --verbose
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./wiremock/mappings:/home/wiremock/mappings
+      - ./wiremock/__files:/home/wiremock/__files
     networks:
       - daprmq-network
 
