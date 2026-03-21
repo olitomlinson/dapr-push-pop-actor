@@ -70,15 +70,15 @@ public class QueueActorTests
                 return new ConditionalValue<List<string>>(false, null);
             });
 
-        // Setup TryGetStateAsync for int (lock counter)
-        mock.Setup(m => m.TryGetStateAsync<int>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        // Setup GetStateAsync for ActorMetadata (used in test assertions)
+        mock.Setup(m => m.GetStateAsync<ActorMetadata>(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string key, CancellationToken ct) =>
             {
-                if (stateData.ContainsKey(key) && stateData[key] is int intValue)
+                if (stateData.ContainsKey(key) && stateData[key] is ActorMetadata metadata)
                 {
-                    return new ConditionalValue<int>(true, intValue);
+                    return metadata;
                 }
-                return new ConditionalValue<int>(false, default);
+                return null!;
             });
 
         // Setup SetStateAsync
@@ -572,9 +572,8 @@ public class QueueActorTests
 
         // Assert
         Assert.NotNull(result.LockId);
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(1, lockCount.Value);
+        var metadata = await mockStateManager.Object.GetStateAsync<DaprMQ.ActorMetadata>("metadata");
+        Assert.Equal(1, metadata.LockCount);
     }
 
     [Fact]
@@ -600,9 +599,8 @@ public class QueueActorTests
 
         // Assert
         Assert.True(ackResult.Success);
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(0, lockCount.Value);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        Assert.Equal(0, metadata.LockCount);
     }
 
     [Fact]
@@ -688,7 +686,8 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{expiredLockId}-lock", expiredLock);
-        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        await mockStateManager.Object.SetStateAsync("metadata", metadata with { LockCount = 1 });
 
         // Act - Simulate reminder cleanup (reminder would fire automatically in production)
         await actor.ReceiveReminderAsync($"lock-{expiredLockId}", Array.Empty<byte>(), TimeSpan.Zero, TimeSpan.Zero);
@@ -706,9 +705,8 @@ public class QueueActorTests
         Assert.False(expiredLockState.HasValue);
 
         // Verify lock count updated (old lock removed, new lock added = still 1)
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(1, lockCount.Value);
+        metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        Assert.Equal(1, metadata.LockCount);
     }
 
     [Fact]
@@ -1481,7 +1479,8 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{popWithAckResult.LockId}-lock", lockState);
-        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        await mockStateManager.Object.SetStateAsync("metadata", metadata with { LockCount = 1 });
 
         // Act - Try to deadletter with expired lock
         var result = await actor.DeadLetter(new Interfaces.DeadLetterRequest { LockId = popWithAckResult.LockId });
@@ -1541,18 +1540,18 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{lockId}-lock", lockData);
-        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        await mockStateManager.Object.SetStateAsync("metadata", metadata with { LockCount = 1 });
 
         // Act - Simulate reminder callback
         await actor.ReceiveReminderAsync($"lock-{lockId}", Array.Empty<byte>(), TimeSpan.Zero, TimeSpan.Zero);
 
         // Assert - Lock state should be removed and lock count should be 0
         var lockState = await mockStateManager.Object.TryGetStateAsync<LockState>($"{lockId}-lock");
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
 
         Assert.False(lockState.HasValue);
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(0, lockCount.Value);
+        Assert.Equal(0, metadata.LockCount);
     }
 
     [Fact]
@@ -1575,18 +1574,18 @@ public class QueueActorTests
             CompetingConsumerMode = false
         };
         await mockStateManager.Object.SetStateAsync($"{lockId}-lock", lockData);
-        await mockStateManager.Object.SetStateAsync("_lock_count", 1);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        await mockStateManager.Object.SetStateAsync("metadata", metadata with { LockCount = 1 });
 
         // Act - Simulate reminder callback with non-lock reminder name
         await actor.ReceiveReminderAsync("some-other-reminder", new byte[0], TimeSpan.Zero, TimeSpan.Zero);
 
         // Assert - Lock state and lock count should still exist
         var lockState = await mockStateManager.Object.TryGetStateAsync<LockState>($"{lockId}-lock");
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
+        metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
 
         Assert.True(lockState.HasValue);
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(1, lockCount.Value);
+        Assert.Equal(1, metadata.LockCount);
     }
 
     [Fact]
@@ -1928,9 +1927,8 @@ public class QueueActorTests
         // Assert
         Assert.True(ackResult.Success);
 
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(0, lockCount.Value);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        Assert.Equal(0, metadata.LockCount);
     }
 
     [Fact]
@@ -1962,9 +1960,8 @@ public class QueueActorTests
         // Assert
         Assert.True(extendResult.Success);
 
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(1, lockCount.Value);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        Assert.Equal(1, metadata.LockCount);
     }
 
     [Fact]
@@ -1991,9 +1988,8 @@ public class QueueActorTests
         await actor.ReceiveReminderAsync($"lock-{lockId}", Array.Empty<byte>(), TimeSpan.Zero, TimeSpan.FromMilliseconds(-1));
 
         // Assert - lock count updated to 0
-        var lockCount = await mockStateManager.Object.TryGetStateAsync<int>("_lock_count");
-        Assert.True(lockCount.HasValue);
-        Assert.Equal(0, lockCount.Value);
+        var metadata = await mockStateManager.Object.GetStateAsync<ActorMetadata>("metadata");
+        Assert.Equal(0, metadata.LockCount);
     }
 
     // ===== Bulk Pop Tests =====

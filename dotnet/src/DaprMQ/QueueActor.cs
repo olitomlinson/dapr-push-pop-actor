@@ -19,6 +19,7 @@ public record ActorMetadata
     public MetadataConfig Config { get; init; } = new();
     public Dictionary<int, QueueMetadata> Queues { get; init; } = new();
     public string? ErrorMessage { get; init; }
+    public int LockCount { get; init; } = 0;
 }
 
 /// <summary>
@@ -95,7 +96,8 @@ public class QueueActor : Actor, IQueueActor, IRemindable
                     SegmentSize = MaxSegmentSize,
                     BufferSegments = 1
                 },
-                Queues = new Dictionary<int, QueueMetadata>()
+                Queues = new Dictionary<int, QueueMetadata>(),
+                LockCount = 0
             };
             await StateManager.SetStateAsync("metadata", initialMetadata);
             await StateManager.SaveStateAsync();
@@ -409,8 +411,7 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             // Check if queue is locked (any active lock blocks Pop)
             if (!skipLockCheck)
             {
-                var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
-                if (lockCount.HasValue && lockCount.Value > 0)
+                if (metadata.LockCount > 0)
                 {
                     Logger.LogDebug("Queue is locked, cannot pop");
                     return (new PopResponse
@@ -627,11 +628,8 @@ public class QueueActor : Actor, IQueueActor, IRemindable
                 await StateManager.RemoveStateAsync($"{lockId}-lock");
 
                 // Decrement lock counter
-                var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
-                if (lockCount.HasValue && lockCount.Value > 0)
-                {
-                    await StateManager.SetStateAsync("_lock_count", lockCount.Value - 1);
-                }
+                var metadata = await GetMetadataAsync();
+                await SetMetadataAsync(metadata with { LockCount = metadata.LockCount - 1 });
 
                 await StateManager.SaveStateAsync();
 
@@ -667,11 +665,8 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             // Get count (default 1, clamped to 1-100)
             int count = Math.Max(1, Math.Min(100, request.Count));
 
-            // Get lock registry
-            var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
-
             // Legacy mode: block if ANY lock exists
-            if (!request.AllowCompetingConsumers && (lockCount.HasValue && lockCount.Value > 0))
+            if (!request.AllowCompetingConsumers && metadata.LockCount > 0)
             {
                 return new PopWithAckResponse
                 {
@@ -743,8 +738,8 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             }
 
             // Save all state atomically - increment lock counter
-            int currentCount = lockCount.HasValue ? lockCount.Value : 0;
-            await StateManager.SetStateAsync("_lock_count", currentCount + lockedItems.Count);
+            metadata = metadata with { LockCount = metadata.LockCount + lockedItems.Count };
+            await SetMetadataAsync(metadata);
             await StateManager.SaveStateAsync();
 
             // Register reminders for auto-expiry (gracefully degrades if scheduler unavailable)
@@ -824,11 +819,8 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             // Remove lock and decrement counter
             await StateManager.RemoveStateAsync($"{lockId}-lock");
 
-            var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
-            if (lockCount.HasValue && lockCount.Value > 0)
-            {
-                await StateManager.SetStateAsync("_lock_count", lockCount.Value - 1);
-            }
+            var metadata = await GetMetadataAsync();
+            await SetMetadataAsync(metadata with { LockCount = metadata.LockCount - 1 });
 
             await StateManager.SaveStateAsync();
 
@@ -1062,11 +1054,8 @@ public class QueueActor : Actor, IQueueActor, IRemindable
             // Remove lock and decrement counter
             await StateManager.RemoveStateAsync($"{lockId}-lock");
 
-            var lockCount = await StateManager.TryGetStateAsync<int>("_lock_count");
-            if (lockCount.HasValue && lockCount.Value > 0)
-            {
-                await StateManager.SetStateAsync("_lock_count", lockCount.Value - 1);
-            }
+            var metadata = await GetMetadataAsync();
+            await SetMetadataAsync(metadata with { LockCount = metadata.LockCount - 1 });
 
             await StateManager.SaveStateAsync();
 
