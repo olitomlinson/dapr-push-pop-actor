@@ -4,7 +4,7 @@
 - Choose from either gauranteed FIFO consumers, or competing consumers (FIFO not gauranteed!)
 - Bring your own control loop to process the queue, or use the built-in HTTP Sink to drive messages to an endpoint.
 
-## Quick Start
+## Quick Start (Requires docker compose and Mac OS ARM64 )
 
 Clone and start with Docker
 ```bash
@@ -231,7 +231,7 @@ Given 40 virtual users, each making 10,000 operations. The avg latency is around
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for optimization strategies.
 
-## Documentation
+## Documentation [COMING SOON!]
 
 - **[Quick Start Guide](docs/QUICKSTART.md)** - Get running in minutes
 - **[API Reference](docs/API_REFERENCE.md)** - Complete method documentation
